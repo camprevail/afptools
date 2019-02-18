@@ -46,7 +46,7 @@ class PackNode(object):
 def create_texturelist(input_path, images):
     size = 1024, 1024
 
-    names = [[os.path.join(input_path, x), x] for x in images]
+    names = [[os.path.join(input_path, x), x] for x in list(set(images))]
     print(names)
 
     images = [(i.size[0] * i.size[1], name, i, basename) for name, basename, i in ((x[0], x[1], Image.open(x[0])) for x in names)]
@@ -65,7 +65,7 @@ def create_texturelist(input_path, images):
             uv = tree.insert(img.size)
 
             if uv is None:
-                images_not_used.append((area, name, img))
+                images_not_used.append((area, name, img, basename))
             else:
                 current_texture.append((uv, name))
                 image_lookup[basename] = [uv.area, img.size]
