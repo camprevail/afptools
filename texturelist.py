@@ -105,4 +105,4 @@ def create_texturelist(input_path, images):
         compress="avslz"
     )
 
-    return etree.tostring(texturelist, pretty_print=True), image_lookup
+    return size, etree.tostring(texturelist, pretty_print=True), image_lookup
