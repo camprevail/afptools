@@ -5,7 +5,10 @@ def decode_afp_file(input_afp_filename, input_bsi_filename):
     bsi_file = bytearray(open(input_bsi_filename, "rb").read())
     afp_file = bytearray(open(input_afp_filename, "rb").read())
 
-    afp_file = bytearray(struct.pack("<I", (struct.unpack(">I", afp_file[:4])[0] & 0x7f7f7f00)) + afp_file[4:])
+    # This can deobfuscate the magic bytes to read "AP2", but we should leave it alone.
+    # The game can actually handle a fully unobfuscated ap2 file so long as the magic bytes are left intact and
+    # an empty bsi file is provided.
+    # afp_file = bytearray(struct.pack("<I", (struct.unpack(">I", afp_file[:4])[0] & 0x7f7f7f00)) + afp_file[4:])
 
     afp_offset = 0
     for i in range(0, len(bsi_file), 2):
@@ -46,12 +49,12 @@ def decode_afp_file(input_afp_filename, input_bsi_filename):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input-afp', help='Input AFP file', required=True)
-    parser.add_argument('--input-bsi', help='Input BSI file', required=True)
-    parser.add_argument('--output', help='Output filename', required=True)
+    parser.add_argument('afp', help='Input AFP file')
+    parser.add_argument('bsi', help='Input BSI file')
+    parser.add_argument('output', help='Output filename')
     args = parser.parse_args()
 
-    decoded = decode_afp_file(args.input_afp, args.input_bsi)
+    decoded = decode_afp_file(args.afp, args.bsi)
     with open(args.output, "wb") as outfile:
         outfile.write(decoded)
 

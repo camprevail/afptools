@@ -1,4 +1,13 @@
 # afptools
-This format sucks balls. Avoid.
+This is a reupload of windyfairy's afptools with a new pattern file for ImHex and a couple of other minor tweaks.
+The pattern file afp format is based on dragonminded's bemaniutils/afputils code.  
 
-This is a tool that decodes the files in the AFP folder for images in some Bemani games. The actual output AFP/AP2 file seems to be some kind of compiled bytecode I believe, heavily tied into ActionScript and Flash related crap. Not worth it.
+By decoding the afp/bsi pair with decode_afp.py and then feeding it into ImHex with the afp pattern, you can browse and
+even make minor edits to fields like translate or scale with ease. Furthermore, the game can handle a fully unobfuscated
+afp file so long as you provide a blank bsi file of the same name.
+
+![ImHex preview 1](images/image1.png)  
+
+Matrix fields require some division to get the actual coordinate, but the imhex pattern does it automatically! It will 
+format the number on read and write, no manual calculation required.
+![Alt text](images/image2.png)

@@ -1,6 +1,11 @@
 import argparse
 import struct
 
+"""
+This file is ok for reading the rects and the label (texture name associated with this shape). 
+If you need something more complete though, use bemaniutils/afputils.
+"""
+
 def read_filename(infile, offset):
     if offset == 0:
         return None
@@ -30,6 +35,7 @@ def parse_geo(input_filename):
 
         infile.seek(0x14, 0)
         texture_width, texture_height = struct.unpack("<HH", infile.read(4))
+        print(f'{texture_width=}, {texture_height=}')
 
         infile.seek(0x20, 0)
 
@@ -72,8 +78,7 @@ def parse_geo(input_filename):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input-geo', help='Input AFP file', required=True)
-    # parser.add_argument('--output', help='Output filename', required=True)
+    parser.add_argument('input_geo', help='Input AFP file')
     args = parser.parse_args()
 
     parse_geo(args.input_geo)

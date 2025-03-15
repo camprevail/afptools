@@ -6,13 +6,16 @@ import shutil
 import struct
 import sys
 import tempfile
-
 import ifstools
 
 from lxml import etree, objectify
 from lxml.builder import E
 from PIL import Image
 
+"""
+This appears to be an attempt to make a full afp animation and ifs package. While the hardcoded frame bytes aren't 
+very useful, some other parts of this code could be useful in the future, such as texturelist and ifs file packing.
+"""
 from texturelist import create_texturelist
 
 # Example animation.json
