@@ -9,5 +9,7 @@ afp file so long as you provide a blank bsi file of the same name.
 ![ImHex preview 1](images/image1.png)  
 
 Matrix fields require some division to get the actual coordinate, but the imhex pattern does it automatically! It will 
-format the number on read and write, no manual calculation required.
+format the number on read and write, no manual calculation required.  
+Also, many shapes have a texture associated with them. The easiest way to find this is by grepping through the geo folder for 
+the tex name you're looking for, and using the shape file id to look it up in the ImHex pattern data.
 ![Alt text](images/image2.png)
