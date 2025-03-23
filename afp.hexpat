@@ -6,6 +6,7 @@
 #include <std/mem.pat>
 #include <std/core.pat>
 #include <std/sys.pat>
+#include <std/string.pat>
 
 // AFP format ported from code in https://github.com/DragonMinded/bemaniutils
 fn Ap2Tag(u8 tagid) {
@@ -164,6 +165,17 @@ fn sprite_lookup(u16 sprite_id) {
             str name = std::mem::read_string(attrs.stringtable_offset + exported_tags[i].asset_string_offset, 30);
             string = std::format("id:{}, exported_name: {}", sprite_id, name);
             return string;
+        }
+    }
+    return string;
+};
+
+fn get_exported_name(u16 sprite_id) {
+    str string = "";
+    for (auto i = 0, i < std::core::member_count(exported_tags), i += 1) {
+        if (sprite_id == exported_tags[i].asset_tag_id) {
+            str name = std::mem::read_string(attrs.stringtable_offset + exported_tags[i].asset_string_offset, 30);
+            return name;
         }
     }
     return string;
@@ -485,6 +497,11 @@ struct AP2PlaceObjectTag {
     } else if (src_tag_id) {
         shape_cmt = std::format("shape_{} ", src_tag_id);
     }
+    // Some games don't seem to have the movie_name field despite having a movie reference
+    str moviename_ = get_exported_name(src_tag_id);
+    if (std::string::length(moviename_) > 0) {
+        shape_cmt = std::format("movie:{} ", moviename_);
+    }
     
     str update_cmt = "";
     if (flags & 0x1) {
@@ -531,8 +548,12 @@ struct Tag {
         if ($ < endpos) {
             $ += (endpos - $); // catchup if we didn't handle all the bytes
         }
-        if (tag_PLACE_OBJECT.movie_name) {
-            comment2 = std::format("d:{} id:{} srcid:{} movie:{}", tag_PLACE_OBJECT.depth, tag_PLACE_OBJECT.object_id, tag_PLACE_OBJECT.src_tag_id, tag_PLACE_OBJECT.movie_name);
+        
+        // Some games don't seem to have the movie_name field despite having a movie reference
+        str moviename_ = get_exported_name(tag_PLACE_OBJECT.src_tag_id);
+        if (std::string::length(moviename_) > 0) {
+        //if (tag_PLACE_OBJECT.movie_name) {
+            comment2 = std::format("d:{} id:{} srcid:{} movie:{}", tag_PLACE_OBJECT.depth, tag_PLACE_OBJECT.object_id, tag_PLACE_OBJECT.src_tag_id, moviename_);
         } else if (tag_PLACE_OBJECT.src_tag_id) {
             comment2 = std::format("d:{} id:{} srcid:{}", tag_PLACE_OBJECT.depth, tag_PLACE_OBJECT.object_id, tag_PLACE_OBJECT.src_tag_id);
         } else {
