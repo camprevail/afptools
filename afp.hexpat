@@ -144,6 +144,10 @@ fn fmt_write_flt_div20(auto int) {
     return s32(int * 20.0);
 };
 
+fn fmt_read_int_to_hex(auto int) {
+    return std::format("0x{:02x}", int);
+};
+
 fn fmt_blend(u8 blend) {
     if (blend == 3) {
         return "multiply";
@@ -203,14 +207,14 @@ struct Color_u8 {
     u8 g;
     u8 b;
     u8 a;
- } [[comment(std::format("r:{:.4f}, g:{:.4f}, b:{:.4f}, a:{:.4f}", (float(r)/255.0), (float(g)/255.0), (float(g)/255.0), (float(a)/255.0)))]];
+ } [[comment(std::format("r:{:.4f}, g:{:.4f}, b:{:.4f}, a:{:.4f}", (float(r)/255.0), (float(g)/255.0), (float(b)/255.0), (float(a)/255.0)))]];
  
 struct Color_u8_reversed {
     u8 a;
     u8 b;
     u8 g;
     u8 r;
- } [[comment(std::format("r:{:.4f}, g:{:.4f}, b:{:.4f}, a:{:.4f}", (float(r)/255.0), (float(g)/255.0), (float(g)/255.0), (float(a)/255.0)))]];
+ } [[comment(std::format("r:{:.4f}, g:{:.4f}, b:{:.4f}, a:{:.4f}", (float(r)/255.0), (float(g)/255.0), (float(b)/255.0), (float(a)/255.0)))]];
  
 struct Color_s16 {
     s16 r;
@@ -342,19 +346,24 @@ struct AP2SpriteTag {
 
 struct AP2PlaceObjectTag {
     u32 start_pos = $;
-    u32 flags1;
+    u32 flags1 [[format_read("fmt_read_int_to_hex")]];
     u16 depth [[comment("The depth (level) that we should access objects from.")]]; 
     u16 object_id [[comment("The object ID that we should associate with this object,\nfor removal and presumably update and other uses.\nNot the same as Tag ID.")]];
     u64 flags = null;
     u64 unhandled_flags = null;
+    u32 flags2 = null;
     if (flags1 & 0x80000000) {
-        u32 more_flags [[comment("The data associated with these flags is not understood\nso we will skip parsing it")]];
-        flags = flags1 | (more_flags << 32);
+        u32 flags2 [[comment("The data associated with these flags is not understood\nso we will skip parsing it")]];
+        flags = flags1 | (flags2 << 32);
         unhandled_flags = flags & ~0x80000000;
     } else {
         flags = flags1;
         unhandled_flags = flags;
     }
+    if (flags2) {
+        u64 combined_flags = flags [[export, format_read("fmt_read_int_to_hex")]];
+    }
+    
     bool unrecognized_options = false;
     
     u16 src_tag_id = null;
@@ -491,17 +500,22 @@ struct AP2PlaceObjectTag {
         s16 matrix_c [[format_read("fmt_read_flt_div32768"), format_write("fmt_write_flt_div32768"), comment("div by 32768")]];
     }
     
-    str shape_cmt = "";
+    
+    str refName = "";
     if (movie_name) {
-        shape_cmt = std::format("movie:{} ", movie_name);
+        refName = std::format("refName:{} ", movie_name);
+    }
+    
+    // Some games don't seem to have the movie_name field despite having an export name
+    str export_cmt = "";
+    str srcid = "";
+    str exportName = get_exported_name(src_tag_id);
+    if (std::string::length(exportName) > 0) {
+        export_cmt = std::format("movie:{} ", exportName);
     } else if (src_tag_id) {
-        shape_cmt = std::format("shape_{} ", src_tag_id);
+        srcid = std::format("srcid:{} ", src_tag_id);
     }
-    // Some games don't seem to have the movie_name field despite having a movie reference
-    str moviename_ = get_exported_name(src_tag_id);
-    if (std::string::length(moviename_) > 0) {
-        shape_cmt = std::format("movie:{} ", moviename_);
-    }
+
     
     str update_cmt = "";
     if (flags & 0x1) {
@@ -514,7 +528,7 @@ struct AP2PlaceObjectTag {
         //std::print("unhandled flags at 0x{:02x}: flags 0x{:02x}", $, unhandled_flags);
     }
     
-} [[comment(std::format("d:{} id:{}, {}{}", depth, object_id, shape_cmt, update_cmt))]];
+} [[comment(std::format("d:{} id:{}, {}{}{}{}", depth, object_id, srcid, export_cmt, refName, update_cmt))]];
 
 
 struct AP2RemoveObjectTag {
@@ -530,6 +544,8 @@ struct Tag {
     u32 curpos = $;
     
     str comment2 = "";
+    str update_cmt = "";
+    str refName = "";
     if (tagtype == "AP2_SHAPE") {
         if (size != 4) {
             std::print("Invalid shape size {}", size);
@@ -549,15 +565,20 @@ struct Tag {
             $ += (endpos - $); // catchup if we didn't handle all the bytes
         }
         
-        // Some games don't seem to have the movie_name field despite having a movie reference
+        // Some games don't seem to have the movie_name field despite having an export name
         str moviename_ = get_exported_name(tag_PLACE_OBJECT.src_tag_id);
         if (std::string::length(moviename_) > 0) {
-        //if (tag_PLACE_OBJECT.movie_name) {
             comment2 = std::format("d:{} id:{} srcid:{} movie:{}", tag_PLACE_OBJECT.depth, tag_PLACE_OBJECT.object_id, tag_PLACE_OBJECT.src_tag_id, moviename_);
         } else if (tag_PLACE_OBJECT.src_tag_id) {
             comment2 = std::format("d:{} id:{} srcid:{}", tag_PLACE_OBJECT.depth, tag_PLACE_OBJECT.object_id, tag_PLACE_OBJECT.src_tag_id);
         } else {
             comment2 = std::format("d:{} id:{}", tag_PLACE_OBJECT.depth, tag_PLACE_OBJECT.object_id);
+        }
+        if (tag_PLACE_OBJECT.movie_name) {
+            refName = std::format("refName:{} ", tag_PLACE_OBJECT.movie_name);
+        }
+        if (tag_PLACE_OBJECT.flags1 & 0x1) {
+            update_cmt = "Update=true";
         }
     }
     else if (tagtype == "AP2_DO_ACTION") {
@@ -576,7 +597,7 @@ struct Tag {
         std::print("Not handling tagtype {} at 0x{:02x}", tagtype, $);
         std::mem::Bytes<(size + 3) & 0xFFFFFFFC> tag_data;
     }
-} [[comment(std::format("{} {}", tagtype, comment2))]];
+} [[comment(std::format("{} {} {} {}", tagtype, comment2, refName, update_cmt))]];
 
 Tag tags[tags_base_header.tags_count] @ attrs.tags_base_offset + tags_base_header.tags_offset;
 
