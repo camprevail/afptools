@@ -110,9 +110,9 @@ fn fmt_frame(u32 frame_info) {
 
 fn fmt_tag_header(u32 data) {
     u32 tagtype = (data >> 22) & 0x3FF;
-    u32 size = data & 0x3FFFFF;
+    u32 length = data & 0x3FFFFF;
     str tagname = Ap2Tag(tagtype);
-    return std::format("Tag type: 0x{:02x} ({}), Size: {}", tagtype, tagname, size); 
+    return std::format("Tag type: 0x{:02x} ({}), Length: {}", tagtype, tagname, length); 
 };
 
 fn fmt_shapename(u32 shapeid) {
@@ -142,6 +142,10 @@ fn fmt_read_flt_div20(s32 int) {
 
 fn fmt_write_flt_div20(auto int) {
     return s32(int * 20.0);
+};
+
+fn fmt_write_s16_flt_div20(auto int) {
+    return s16(int * 20.0);
 };
 
 fn fmt_read_int_to_hex(auto int) {
@@ -223,23 +227,33 @@ struct Color_s16 {
     s16 a;
  };
  
+struct Point {
+    s32 x [[format_read("fmt_read_flt_div20"), format_write("fmt_write_flt_div20"), comment("div by 20")]];;
+    s32 y [[format_read("fmt_read_flt_div20"), format_write("fmt_write_flt_div20"), comment("div by 20")]];;
+    s32 z [[format_read("fmt_read_flt_div20"), format_write("fmt_write_flt_div20"), comment("div by 20")]];;
+ };
+ 
 struct AP2Attributes {
     if (header.flags & 0x2) {
         s32 fps [[format_read("fmt_floatint")]];
     } else {
         float fps;
     }
-    Color_u8 bg_color; // Seldom used by the game, especially in larger animations.
+    if (header.flags & 0x1) {
+        Color_u8 bg_color; // Do games even use this?
+    }
     u16 num_exported_assets;
     s16 imported_tags_count;
     u32 tags_base_offset [[format_read("hex")]];
-    u32 asset_offset [[format_read("hex")]];
+    u32 exported_tags_offset [[format_read("hex")]];
     u32 imported_tags_offset [[format_read("hex")]];
     u32 stringtable_offset [[format_read("hex")]];
     u32 stringtable_size;
-    s32 imported_tag_initializers_offset [[format_read("hex")]];
+    if (header.flags & 0x4) {
+        s32 imported_tag_initializers_offset [[format_read("hex")]];
+    }
 };
-AP2Attributes attrs @ 0x18;
+AP2Attributes attrs @ $;
 
 
 struct ExportedTag {
@@ -247,25 +261,26 @@ struct ExportedTag {
     u16 asset_string_offset;
     char asset_name[] @ attrs.stringtable_offset + asset_string_offset;
 } [[comment(std::format("{}, sprite_id {}", asset_name, asset_tag_id))]];
-ExportedTag exported_tags[attrs.num_exported_assets] @ attrs.asset_offset;
+ExportedTag exported_tags[attrs.num_exported_assets] @ attrs.exported_tags_offset;
 
 
 struct NamedTagReference {
     u16 asset_id;
-    u16 asset_name_offset;
-    char asset_name[] @ attrs.stringtable_offset + asset_name_offset;
+    u16 asset_string_offset;
+    char asset_name[] @ attrs.stringtable_offset + asset_string_offset;
 };
 
 
 struct ImportedTag {
-    u16 swf_name_offset;
+    u16 asset_string_offset;
     u16 count;
-    char swf_name[] @ attrs.stringtable_offset + swf_name_offset;
+    char swf_name[] @ attrs.stringtable_offset + asset_string_offset;
     NamedTagReference named_tagref[count];
 };
 ImportedTag imported_tags[attrs.imported_tags_count] @ attrs.imported_tags_offset;
 
-
+// This appears to be bytecode to execute on a per-frame basis. We execute this every frame and
+// only execute up to the point where we equal the current frame.
 struct FrameBytecode {
     u16 tag_id, frame;
     u32 action_bytecode_offset;
@@ -285,10 +300,10 @@ ImportedTagsBaseInitializer imported_tags_bytecode @ attrs.imported_tag_initiali
 
 struct TagsBaseHeader {
     u16 name_reference_flags; //This is 4 if there is are funcnames in the label table.
-    u16 name_reference_count;
+    u16 frame_label_count;
     u32 frame_count;
     u32 tags_count;
-    u32 name_reference_offset;
+    u32 frame_labels_offset;
     u32 frame_offset;
     u32 tags_offset;
     u16 funcname_count = 0;
@@ -326,6 +341,62 @@ struct AP2ImageTag {
 } [[comment(std::format("\"{}\" id:{}", name, id))]];
 
 
+
+
+u32 bit = 0;
+u32 mask = 0;
+fn read_bit() {
+    if (bit < 32) {
+        return true;
+    } else {
+        bit = 0;
+        return false;
+    }
+};
+
+struct Element {
+    s16 x [[format_read("fmt_read_flt_div20"), format_write("fmt_write_s16_flt_div20")]];
+    s16 y [[format_read("fmt_read_flt_div20"), format_write("fmt_write_s16_flt_div20")]];
+} [[format_read("fmt_element")]];
+
+fn fmt_element(ref Element data) {
+    return std::format("x:{:.2f}, y:{:.2f}", (data.x / 20.0f), (data.y / 20.0f));
+};
+
+struct MaskEffect {    
+    if (mask & (1 << bit)) {
+        // read 2 shorts
+        u16 unk_flags [[format_read("fmt_read_int_to_hex")]];  
+        u16 coord_count; 
+        
+        u32 short_count = (
+            // Either 2 or 6, depending on unk_flags & 0x10 set.
+            (((unk_flags & 0x10) | 0x8) >> 2)
+            *
+            // Either 1 or 2, depending on unk_flags & 0x1 set.
+            // Seems to indicate whether there are 1 or 2 quads in this segment?
+            ((unk_flags & 1) + 1)
+            *
+            // Count read from the header above.
+            coord_count
+        );
+
+        Element coord_chunk[short_count / 2]; // Read x amount of signed shorts. These are expressed in 
+                                              // twips, so divide them by 20 to get the real coordinate.
+    }
+    bit += 1;
+} [[format_read("fmt_mask_chunk")]];
+
+fn fmt_mask_chunk(ref MaskEffect data) {
+    if (std::core::has_member(data, "unk_flags")) {
+        return "true";
+    }
+    return "";
+};
+
+
+
+
 using Tag;
 struct AP2SpriteTag {
     u16 sprite_flags, sprite_id;
@@ -334,15 +405,50 @@ struct AP2SpriteTag {
     }
     u32 current_pos = $;
     TagsBaseHeader subtags_base_header;
+    Label labels[subtags_base_header.frame_label_count] @ subtags_base_header.frame_labels_offset + current_pos;
+    u32 funcnames_offset = subtags_base_header.frame_labels_offset + current_pos + (subtags_base_header.frame_label_count * 4);
+    Label funcnames[subtags_base_header.funcname_count] @ funcnames_offset;
     Frame frames[subtags_base_header.frame_count] @ subtags_base_header.frame_offset + current_pos; // offsets are relative to the header
     Tag subtags[subtags_base_header.tags_count] @ subtags_base_header.tags_offset + current_pos;
-    if (subtags_base_header.name_reference_count > 0) {
-        Label labels[subtags_base_header.name_reference_count] @ subtags_base_header.name_reference_offset + current_pos;
-    }
-    u32 funcnames_offset = subtags_base_header.name_reference_offset + current_pos + (subtags_base_header.name_reference_count * 4);
-    Label funcnames[subtags_base_header.funcname_count] @ funcnames_offset;
 } [[comment(sprite_lookup(sprite_id))]];
 
+
+struct EventData {
+    s32 event_flags, event_size;
+    std::mem::Bytes<event_size-8> event_bytecode;
+};
+
+struct Matrix3D {
+    s32 a11 [[format_read("fmt_read_flt_div1024")]];
+    s32 a12 [[format_read("fmt_read_flt_div1024")]];
+    s32 a13 [[format_read("fmt_read_flt_div1024")]];
+    
+    s32 a21 [[format_read("fmt_read_flt_div1024")]];
+    s32 a22 [[format_read("fmt_read_flt_div1024")]];
+    s32 a23 [[format_read("fmt_read_flt_div1024")]];
+    
+    s32 a31 [[format_read("fmt_read_flt_div1024")]];
+    s32 a32 [[format_read("fmt_read_flt_div1024")]];
+    s32 a33 [[format_read("fmt_read_flt_div1024")]];
+};
+
+struct HSL {
+    s16 hue;
+    s8 saturation;
+    s8 lightness;
+};
+
+struct Ap2Image_Flag1 {
+    u32 srcid;
+    s16 uv_x;
+    s16 uv_y;
+};
+
+struct Ap2Image_Flag2 {
+    u16 srcid;
+    s16 uv_x;
+    s16 uv_y;
+};
 
 struct AP2PlaceObjectTag {
     u32 start_pos = $;
@@ -353,7 +459,8 @@ struct AP2PlaceObjectTag {
     u64 unhandled_flags = null;
     u32 flags2 = null;
     if (flags1 & 0x80000000) {
-        u32 flags2 [[comment("The data associated with these flags is not understood\nso we will skip parsing it")]];
+        u32 flags2 [[format_read("fmt_read_int_to_hex")]];
+        // std::print("flags2 at {}", $);
         flags = flags1 | (flags2 << 32);
         unhandled_flags = flags & ~0x80000000;
     } else {
@@ -402,7 +509,7 @@ struct AP2PlaceObjectTag {
     }
     
     // Due to possible misalignment, we need to realign.
-    std::mem::AlignTo<4>;
+    $ += (-$ & 3);
     
     if (flags & 0x100) {
         // Has scale component.
@@ -450,12 +557,9 @@ struct AP2PlaceObjectTag {
     }
     
     if (flags & 0x80) {
-        // event bytecode
+        // Event bytecode similar to AS3.
         unhandled_flags &= ~0x80;
-        s32 event_flags, event_size;
-        // Not bothering with event data.
-        //$ += event_size - 8;
-        std::mem::Bytes<event_size-8> event_bytecode;
+        EventData event_data;
     }
     
     if (flags & 0x10000) {
@@ -465,14 +569,14 @@ struct AP2PlaceObjectTag {
         std::print("Unknown filter data at 0x{:02x}", $);
     }
     
-    if (flags & 0x1000000) {
+    if (flags & 0x1000000) { 
         // Rotation origin
         unhandled_flags &= ~0x1000000;
         s32 rot_origin_x [[format_read("fmt_read_flt_div20"), format_write("fmt_write_flt_div20"), comment("div by 20")]];
         s32 rot_origin_y [[format_read("fmt_read_flt_div20"), format_write("fmt_write_flt_div20"), comment("div by 20")]];
     }
     
-    if (flags & 0x200000000) {
+    if (flags & 0x200000000) { //flags2 & 0x2
         // Z Rotation origin
         unhandled_flags &= ~0x200000000;
         s32 rot_origin_z [[format_read("fmt_read_flt_div20"), format_write("fmt_write_flt_div20"), comment("div by 20")]];
@@ -487,7 +591,8 @@ struct AP2PlaceObjectTag {
         //This appears in newer IIDX to be an alternative method for populating
         // transform scaling. Also appears in museca.
         unhandled_flags &= ~0x40000;
-        if (($ - start_pos) < parent.size) {
+        // std::print("flags 40k at {}", $);
+        if (($ - start_pos) < parent.length) {
             s16 matrix_a [[format_read("fmt_read_flt_div32768"), format_write("fmt_write_flt_div32768"), comment("div by 32768")]];
             s16 matrix_d [[format_read("fmt_read_flt_div32768"), format_write("fmt_write_flt_div32768"), comment("div by 32768")]];
         }
@@ -500,6 +605,73 @@ struct AP2PlaceObjectTag {
         s16 matrix_c [[format_read("fmt_read_flt_div32768"), format_write("fmt_write_flt_div32768"), comment("div by 32768")]];
     }
     
+    if (flags & 0x100000) {
+        unhandled_flags &= ~0x100000;
+        u16 unk_4;
+    }
+    
+    // Due to possible misalignment, we need to realign.
+    $ += (-$ & 3);
+
+    if (flags & 0x8000000) {
+        // This is the translation offset "z" for a 3D transform matrix.
+        unhandled_flags &= ~0x8000000;
+        s32 translate_z_3D [[format_read("fmt_read_flt_div20")]];
+    }
+    
+    if (flags & 0x10000000) {
+        //std::print("3D matrix flag 10_000_000 at {}", $);
+        /*
+           This is a 3x3 grid of initializers for a 3D transform matrix. It appears that
+           files also include the A/D and B/C pairs that match the correct locations in
+           previous transform parsing sections, possibly for backwards compatibility?
+        */
+        unhandled_flags &= ~0x10000000;
+        Matrix3D matrix3D;
+    }
+    
+    if (flags & 0x20000000) {
+        // Looks like Hue/Lightness/Saturation shift, matching after effects in the limits.
+        unhandled_flags &= ~0x20000000;
+        HSL HSL;
+    }
+    
+    if (flags & 0x400000000) {
+        std::error("Unknown flags2 & 0x4 data at {}! Aborting!", $);
+    }
+    
+    if (flags & 0x800000000) {
+        // This is masking effects like linear and radial wipes. 
+        // You can't use for-loops in imhex structs so I had to come up with some convoluted way
+        // to parse this using global vars to step through the bitmask. 
+        
+        //std::print("flags2 & 0x8 at {}", $);
+        unhandled_flags &= ~0x800000000;
+        u32 bitmask [[format_read("fmt_read_int_to_hex")]];
+        mask = bitmask;
+        MaskEffect maskEffect[while(read_bit() != 0)];
+    }
+    
+    if (flags & 0x1000000000) {
+         // Has something to do with AP2 Image tags
+        //std::print("flags2 & 0x10 at {}", $);
+        unhandled_flags &= ~0x1000000000;
+        Ap2Image_Flag1 ap2ImageFlag1;
+    }
+    
+    if (flags & 0x2000000000) {
+        // Has something to do with AP2 Image tags
+        //std::print("flags2 & 0x20 at {}", $);
+        unhandled_flags &= ~0x2000000000;
+        Ap2Image_Flag2 ap2ImageFlag2;
+    }
+    
+    // Due to possible misalignment, we need to realign.
+    $ += (-$ & 3);
+    
+    if (flags & 0x4000000000) {
+        std::error("Unknown flags2 & 0x40 data at {}! Aborting!", $);
+    }
     
     str refName = "";
     if (movie_name) {
@@ -516,16 +688,15 @@ struct AP2PlaceObjectTag {
         srcid = std::format("srcid:{} ", src_tag_id);
     }
 
-    
     str update_cmt = "";
     if (flags & 0x1) {
         unhandled_flags &= ~0x1;
         update_cmt = "Update=true";
     }
-    // Not bothering with the rest of the flags. Most of the important ones are covered.
+
     unhandled_flags &= ~0x400000D;
     if (unhandled_flags) {
-        //std::print("unhandled flags at 0x{:02x}: flags 0x{:02x}", $, unhandled_flags);
+        std::print("unhandled flags at 0x{:02x}: flags 0x{:02x}", $, unhandled_flags);
     }
     
 } [[comment(std::format("d:{} id:{}, {}{}{}{}", depth, object_id, srcid, export_cmt, refName, update_cmt))]];
@@ -535,20 +706,29 @@ struct AP2RemoveObjectTag {
     u16 object_id, depth;
 } [[comment(std::format("d:{} id:{}", depth, object_id))]];
 
+struct AP2PlaceCameraTag {
+    u16 flags, camera_id;
+    if (flags & 0x1) {
+        Point center;
+    }
+    if (flags & 0x2) {
+        s32 focal_length [[format_read("fmt_read_flt_div20"), format_write("fmt_write_flt_div20"), comment("div by 20")]];;
+    }
+} [[comment(std::format("camera id:{}", camera_id))]];
 
 struct Tag {
     u32 tag_header [[format_read("fmt_tag_header")]];
     str tagtype = Ap2Tag((tag_header >> 22) & 0x3FF);
-    u32 size = tag_header & 0x3FFFFF;
-    u32 endpos = $ + size;
+    u32 length = tag_header & 0x3FFFFF;
+    u32 endpos = $ + length;
     u32 curpos = $;
     
     str comment2 = "";
     str update_cmt = "";
     str refName = "";
     if (tagtype == "AP2_SHAPE") {
-        if (size != 4) {
-            std::print("Invalid shape size {}", size);
+        if (length != 4) {
+            std::print("Invalid tag length for shape {}", length);
         }
         AP2ShapeTag tag_SHAPE;
         str shapename = fmt_shapename(tag_SHAPE.reference);
@@ -556,7 +736,7 @@ struct Tag {
     }
     else if (tagtype == "AP2_DEFINE_SPRITE") {
         AP2SpriteTag tag_SPRITE;
-        $ = curpos + size;
+        $ = curpos + length;
         comment2 = sprite_lookup(tag_SPRITE.sprite_id);
     }
     else if (tagtype == "AP2_PLACE_OBJECT") {
@@ -565,10 +745,9 @@ struct Tag {
             $ += (endpos - $); // catchup if we didn't handle all the bytes
         }
         
-        // Some games don't seem to have the movie_name field despite having an export name
-        str moviename_ = get_exported_name(tag_PLACE_OBJECT.src_tag_id);
-        if (std::string::length(moviename_) > 0) {
-            comment2 = std::format("d:{} id:{} srcid:{} movie:{}", tag_PLACE_OBJECT.depth, tag_PLACE_OBJECT.object_id, tag_PLACE_OBJECT.src_tag_id, moviename_);
+        str exported_name = get_exported_name(tag_PLACE_OBJECT.src_tag_id);
+        if (std::string::length(exported_name) > 0) {
+            comment2 = std::format("d:{} id:{} srcid:{} exported_name:{}", tag_PLACE_OBJECT.depth, tag_PLACE_OBJECT.object_id, tag_PLACE_OBJECT.src_tag_id, exported_name);
         } else if (tag_PLACE_OBJECT.src_tag_id) {
             comment2 = std::format("d:{} id:{} srcid:{}", tag_PLACE_OBJECT.depth, tag_PLACE_OBJECT.object_id, tag_PLACE_OBJECT.src_tag_id);
         } else {
@@ -582,8 +761,8 @@ struct Tag {
         }
     }
     else if (tagtype == "AP2_DO_ACTION") {
-        std::mem::Bytes<size> bytecode_data;
-        $ = curpos + size;
+        std::mem::Bytes<length> bytecode_data;
+        $ = curpos + length;
     }
     else if (tagtype == "AP2_REMOVE_OBJECT") {
         AP2RemoveObjectTag tag_REMOVE_OBJECT;
@@ -593,15 +772,19 @@ struct Tag {
         AP2ImageTag tag_IMAGE;
         comment2 = std::format("id:{} {}", tag_IMAGE.id, tag_IMAGE.name);
     }
+    else if (tagtype == "AP2_PLACE_CAMERA") {
+        AP2PlaceCameraTag tag_CAMERA;
+        comment2 = std::format("camera_id:{}", tag_CAMERA.camera_id);
+    }
     else {
         std::print("Not handling tagtype {} at 0x{:02x}", tagtype, $);
-        std::mem::Bytes<(size + 3) & 0xFFFFFFFC> tag_data;
+        std::mem::Bytes<(length + 3) & 0xFFFFFFFC> tag_data;
     }
 } [[comment(std::format("{} {} {} {}", tagtype, comment2, refName, update_cmt))]];
 
 Tag tags[tags_base_header.tags_count] @ attrs.tags_base_offset + tags_base_header.tags_offset;
 
-Label labels[tags_base_header.name_reference_count] @ attrs.tags_base_offset + tags_base_header.name_reference_offset;
+Label labels[tags_base_header.frame_label_count] @ attrs.tags_base_offset + tags_base_header.frame_labels_offset;
 
-u32 funcnames_offset = attrs.tags_base_offset + tags_base_header.name_reference_offset + (tags_base_header.name_reference_count * 4);
+u32 funcnames_offset = attrs.tags_base_offset + tags_base_header.frame_labels_offset + (tags_base_header.frame_label_count * 4);
 Label funcnames[tags_base_header.funcname_count] @ funcnames_offset;
