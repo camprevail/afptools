@@ -295,7 +295,13 @@ struct ImportedTagsBaseInitializer {
     u16 unk1, count;
     FrameBytecode frame_bytecode[count];
 };
-ImportedTagsBaseInitializer imported_tags_bytecode @ attrs.imported_tag_initializers_offset;
+
+struct ImportedTagsBytecode {
+    if (header.flags & 0x4) {
+        ImportedTagsBaseInitializer imported_tags_bytecode [[inline]];
+    }
+};
+ImportedTagsBytecode imported_tags_bytecode @ attrs.imported_tag_initializers_offset;
 
 
 struct TagsBaseHeader {

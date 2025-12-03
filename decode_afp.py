@@ -1,5 +1,6 @@
 import argparse
 import struct
+import os
 
 def decode_afp_file(input_afp_filename, input_bsi_filename):
     bsi_file = bytearray(open(input_bsi_filename, "rb").read())
@@ -50,10 +51,18 @@ def decode_afp_file(input_afp_filename, input_bsi_filename):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('afp', help='Input AFP file')
-    parser.add_argument('bsi', help='Input BSI file')
     parser.add_argument('output', help='Output filename')
+    parser.add_argument('-bsi', help="Optional path to BSI file. Default behavior looks in the afp/bsi dir.")
     args = parser.parse_args()
 
+    if args.bsi is None:
+        basename = os.path.basename(args.afp)
+        dirname = os.path.dirname(args.afp)
+        bsi = os.path.join(dirname, 'bsi', basename)
+        if os.path.exists(bsi):
+            args.bsi = bsi
+        else:
+            raise FileNotFoundError(f"Could not find BSI. Use -bsi [path] if it's not in the default location")
     decoded = decode_afp_file(args.afp, args.bsi)
     with open(args.output, "wb") as outfile:
         outfile.write(decoded)
