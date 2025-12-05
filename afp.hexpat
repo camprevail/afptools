@@ -192,7 +192,7 @@ fn get_exported_name(u16 sprite_id) {
 
 
 struct AP2Header {
-    char magic[4] [[comment("First byte is the version id.\nThe rest can be decoded to AP2 by reading\nwith big endian and & 0x7f7f7f00.")]]; 
+    char magic[4] [[comment("First byte is the version id.\nBytes 0-3 should be able to decode to 'AP2' by reading as\nlittle endian and & 0x7f7f7f00.")]]; 
     std::assert((magic[1] == 0xB2 && magic[2] == 0xD0 && magic[3] == 0xC1), "Unexpected magic bytes. Aborting.\nHas your data been decoded yet?");
     u32 length;
     u16 version;
@@ -250,7 +250,7 @@ struct AP2Attributes {
     u32 stringtable_offset [[format_read("hex")]];
     u32 stringtable_size;
     if (header.flags & 0x4) {
-        s32 imported_tag_initializers_offset [[format_read("hex")]];
+        u32 imported_tag_initializers_offset [[format_read("hex")]];
     }
 };
 AP2Attributes attrs @ $;
@@ -420,8 +420,8 @@ struct AP2SpriteTag {
 
 
 struct EventData {
-    s32 event_flags, event_size;
-    std::mem::Bytes<event_size-8> event_bytecode;
+    u32 flags, length;
+    std::mem::Bytes<length-8> event_bytecode;
 };
 
 struct Matrix3D {
@@ -493,12 +493,12 @@ struct AP2PlaceObjectTag {
         u16 label_id;
     }
     
-    char movie_name = null;
+    char ref_name = null;
     if (flags & 0x20) {
         // Has movie name component.
         unhandled_flags &= ~0x20;
         u16 nameoffset;
-        char movie_name[] @ attrs.stringtable_offset + nameoffset;
+        char ref_name[] @ attrs.stringtable_offset + nameoffset;
     }
     
     if (flags & 0x40) {
@@ -571,7 +571,7 @@ struct AP2PlaceObjectTag {
     if (flags & 0x10000) {
         // Unknown filter data
         unhandled_flags &= ~0x10000;
-        s16 count, filter_size;
+        u16 count, filter_size;
         std::print("Unknown filter data at 0x{:02x}", $);
     }
     
@@ -680,11 +680,11 @@ struct AP2PlaceObjectTag {
     }
     
     str refName = "";
-    if (movie_name) {
-        refName = std::format("refName:{} ", movie_name);
+    if (ref_name) {
+        refName = std::format("refName:{} ", ref_name);
     }
     
-    // Some games don't seem to have the movie_name field despite having an export name
+    // The object placed isn't always the exported object.
     str export_cmt = "";
     str srcid = "";
     str exportName = get_exported_name(src_tag_id);
@@ -759,8 +759,8 @@ struct Tag {
         } else {
             comment2 = std::format("d:{} id:{}", tag_PLACE_OBJECT.depth, tag_PLACE_OBJECT.object_id);
         }
-        if (tag_PLACE_OBJECT.movie_name) {
-            refName = std::format("refName:{} ", tag_PLACE_OBJECT.movie_name);
+        if (tag_PLACE_OBJECT.ref_name) {
+            refName = std::format("refName:{} ", tag_PLACE_OBJECT.ref_name);
         }
         if (tag_PLACE_OBJECT.flags1 & 0x1) {
             update_cmt = "Update=true";

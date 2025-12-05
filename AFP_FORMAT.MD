@@ -154,17 +154,17 @@ in practice. Konami added their own AP2 tags onto the end of the table.
 The header section at the top of the afp file. The flags are not fully understood. Some determine what is parsed in the 
 AP2Attributes struct. Flags & 0x8 seems to disable the AP2_DO_ACTION tags. 
 
-| Field      | Type    | Comment                                                                                                    |
-|------------|---------|------------------------------------------------------------------------------------------------------------|
-| magic      | char[4] | First byte is the version id. The rest can be decoded to AP2 by  reading with big endian and & 0x7f7f7f00. |
-| length     | u32     | The total file length                                                                                      |
-| version    | u16     |                                                                                                            |
-| nameoffset | u16     | Relative to string table. Usually the first string in the table, this is the name of the file/movie.       |
-| flags      | u32     |                                                                                                            |
-| left       | u16     | Composition bounding box                                                                                   |
-| right      | u16     |                                                                                                            |
-| top        | u16     |                                                                                                            |
-| bottom     | u16     |                                                                                                            |
+| Field      | Type    | Comment                                                                                                                      |
+|------------|---------|------------------------------------------------------------------------------------------------------------------------------|
+| magic      | char[4] | First byte is the version id. The whole thing can be decoded to AP2 by reading in little endian and & 0x7f7f7f00.            |
+| length     | u32     | The total file length.                                                                                                       |
+| version    | u16     | Some kind of version relating to tag parsing. Modern afp libs only accept 0x200.                                             |
+| nameoffset | u16     | Relative to string table. Usually the first string in the table, this is the name of the file/movie.                         |
+| flags      | u32     | Not all bits known. 0x1 and 0x3 determine the presence of some fields in AP2Attributes. 0x8 seems to disable AP2Action tags. |
+| left       | u16     | Composition bounding box.                                                                                                    |
+| right      | u16     |                                                                                                                              |
+| top        | u16     |                                                                                                                              |
+| bottom     | u16     |                                                                                                                              |
 
 ### struct AP2Attributes
 Follows the AP2Header. Contains some more information about the composition as well as absolute offsets for the main sections 
@@ -181,7 +181,7 @@ of the file.
 | imported_tags_offset             | u32          |                    | Absolute offset of the imported_tags section.         |
 | stringtable_offset               | u32          |                    | Absolute offset of the string table.                  |
 | stringtable_size                 | u32          |                    |                                                       |
-| imported_tag_initializers_offset | s32          | header.flags & 0x4 | Absolute offset of the imported_tags_bytecode section |
+| imported_tag_initializers_offset | u32          | header.flags & 0x4 | Absolute offset of the imported_tags_bytecode section |
 
 ### struct ExportedTag
 Exported tags are objects that have been flagged for export. In flash animation, this makes them available for import by 
@@ -210,21 +210,24 @@ to be a single "aeplib" import reference at least, but I'm not sure what it does
 |---------------------|--------------------------|---------------------------------|
 | asset_string_offset | u16                      | Relative offset to string table |
 | count               | u16                      |                                 |
-| named_tagRef        | NamedTagReference[count] |                                 |
+| named_tagRefs       | NamedTagReference[count] |                                 |
 
 ### struct FrameBytecode
 This appears to be bytecode to execute on a per-frame basis. We execute this every frame and
 only execute up to the point where we equal the current frame.  
 If action_bytecode_length > 0, the bytecode can be found at  attrs.imported_tag_initializers_offset + action_bytecode_offset.
 
-| Field                  | Type | Comment                         |
-|------------------------|------|---------------------------------|
-| tag_id                 | u16  |                                 |
-| frame                  | u16  |                                 |
-| action_bytecode_offset | u32  |                                 |
-| action_bytecode_length | u32  |                                 |
+| Field                  | Type | Comment                                                    |
+|------------------------|------|------------------------------------------------------------|
+| tag_id                 | u16  |                                                            |
+| frame                  | u16  |                                                            |
+| action_bytecode_offset | u32  | Relative to AP2Attributes.imported_tag_initializers_offset |
+| action_bytecode_length | u32  |                                                            |
 
 ### struct ImportedTagsBaseInitializer
+Bytecode to execute on a per-frame basis. We execute this every frame and only execute up to the point where we equal the 
+current frame.
+
 | Field          | Type                 | Comment                 |
 |----------------|----------------------|-------------------------|
 | unk1           | u16                  |                         |
@@ -235,16 +238,16 @@ If action_bytecode_length > 0, the bytecode can be found at  attrs.imported_tag_
 A header used in the root clip and in sprites. Contains information for parsing a movie clip/sprite.  
 All offsets are relative to the start of this header object. 
 
-| Field                | Type | Condition                 | Comment                                               |
-|----------------------|------|---------------------------|-------------------------------------------------------|
-| name_reference_flags | u16  |                           | This is 4 if there are funcnames in the string table. |
-| frame_label_count    | u16  |                           |                                                       |
-| frame_count          | u32  |                           |                                                       |
-| tags_count           | u32  |                           | The number of tags in the root clip.                  |
-| frame_labels_offset  | u32  |                           | Relative to the start of this header object.          |
-| frame_offset         | u32  |                           | Relative to the start of this header object.          |
-| tags_offset          | u32  |                           | Relative to the start of this header object.          |
-| funcname_count       | u16  | name_reference_flags == 4 |                                                       |
+| Field                | Type | Condition                | Comment                                               |
+|----------------------|------|--------------------------|-------------------------------------------------------|
+| name_reference_flags | u16  |                          | This is 4 if there are funcnames in the string table. |
+| frame_label_count    | u16  |                          |                                                       |
+| frame_count          | u32  |                          |                                                       |
+| tags_count           | u32  |                          | The number of tags in the root clip.                  |
+| frame_labels_offset  | u32  |                          | Relative to the start of this header object.          |
+| frames_offset        | u32  |                          | Relative to the start of this header object.          |
+| tags_offset          | u32  |                          | Relative to the start of this header object.          |
+| funcname_count       | u16  | name_reference_flags & 4 |                                                       |
 
 ### struct Frame
 | Field      | Type | Comment                                                                       |
@@ -342,6 +345,15 @@ assigned to shapes, and often assgined to a double-nested sprite with 1 tag that
 | y     | s32  | Divide by 20.0  |
 | z     | s32  | Divide by 20.0  |
 
+### struct HSL
+Hue/Lightness/Saturation shift, matching after effects in the limits.
+
+| Field      | Type | Comment         |
+|------------|------|-----------------|
+| hue        | s16  | Divide by 360.0 |
+| saturation | s8   | Divide by 100.0 |
+| lightness  | s8   | Divide by 100.0 |
+
 ### struct AP2PlaceCameraTag
 Defines a camera by specifying the location and distance to the render plane in 3D space. The camera always looks straight
 down at the canvas and the focal length, in practice, always matches the Z offset of the camera. This is only used in 
@@ -360,11 +372,11 @@ of the main movie clip in a similar order. It has its own timeline that can be c
 
 | Field               | Type                                                                                      | Condition   | Comment                                                                                                                                              |
 |---------------------|-------------------------------------------------------------------------------------------|-------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
-| flags               | u32                                                                                       |             | The frame number that this label is attached to                                                                                                      |
+| flags               | u16                                                                                       |             |                                                                                                                                                      |
 | sprite_id           | u16                                                                                       |             | Object id                                                                                                                                            |
 | subtags_offset      | u32                                                                                       | flags & 0x1 | Not sure if this offset is really even necessary.                                                                                                    |
 | subtags_base_header | TagsBaseHeader                                                                            |             |                                                                                                                                                      |
-| frames              | Frame[subtags_base_header.frame_count] @ subtags_base_header.frame_offset                 |             | * Relative to TagsBaseHeader                                                                                                                         |
+| frames              | Frame[subtags_base_header.frame_count] @ subtags_base_header.frames_offset                |             | * Relative to TagsBaseHeader                                                                                                                         |
 | subtags             | Tag[subtags_base_header.tags_counnt] @ subtags_base_header.tags_offset                    |             | * Relative to TagsBaseHeader                                                                                                                         |
 | labels              | Label[subtags_base_header.frame_label_count] @ subtags_base_header.frame_labels_offset    |             | * Relative to TagsBaseHeader                                                                                                                         |
 | funcnames           | Label[subtags_base_header.funcname_count] @ (frame_label_count * 4) + frame_labels_offset |             | * Relative to TagsBaseHeader. This doesn't have an offset defined in the tagsbaseheader, but it always seems to follow right after the frame labels. |
@@ -383,23 +395,23 @@ Event triggers found within an AP2_PLACE_OBJECT tag. Some event triggers include
 and key movements and rollovers, followed by compiled bytecode similar to AS3 used for setting masks, toggling visibility, rewind/advance, etc. 
 See bemaniutils/swf.py and decompile.py for parsing details.
 
-| Field          | Type             | Comment             |
-|----------------|------------------|---------------------|
-| event_flags    | s32              |                     |
-| event_size     | s32              |                     |
-| event_bytecode | char[event_size] | Compiled bytecode.  |
+| Field    | Type           | Comment            |
+|----------|----------------|--------------------|
+| flags    | u32            |                    |
+| length   | u32            |                    |
+| bytecode | char[length]   | Compiled bytecode. |
 
 ### struct AP2DoAction
 Compiled bytecode similar to AS3 used for setting masks, toggling visibility, rewind/advance, looping, etc.
 See bemaniutils/swf.py and decompile.py for parsing details.
 
-| Field          | Type             | Comment             |
-|----------------|------------------|---------------------|
-| event_bytecode | char[tag_length] | Compiled bytecode.  |
+| Field      | Type             | Comment             |
+|------------|------------------|---------------------|
+| bytecode   | char[tag_length] | Compiled bytecode.  |
 
 ### struct AP2PlaceObjectTag
-Behold: Konami's all-in-one Place Object tag, complete with obviously hacked-in features that flash doesn't natively support
-such as 3D transformations and masking effects. Members that appear more than once in this table should only be assigned as 
+Behold: Konami's mighty, all-in-one Place Object tag. Complete with obviously hacked-in features that flash doesn't natively support
+such as 3D transformations and transition/masking effects. Members that appear more than once in this table should only be assigned as 
 one or the other, not both. Not all flags are fully understood.  
 Places an object at the specified depth. Only one object can exist at each depth, but the same object can be placed multiple
 times at different depths.
@@ -408,11 +420,11 @@ times at different depths.
 |--------------|-------------------|-----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
 | flags1       | u32               |                       |                                                                                                                                                          |
 | depth        | u16               |                       |                                                                                                                                                          |
-| object_id    |                   |                       |                                                                                                                                                          |
+| object_id    | u16               |                       |                                                                                                                                                          |
 | flags2       | u32               | flags1 & 0x8_000_000  |                                                                                                                                                          |
 | src_tag_id   | u16               | flags1 & 0x2          | Has a shape or movie component. This id references an already created object.                                                                            |
 | label_id     | u16               | flags1 & 0x10         | Has a label component.                                                                                                                                   |
-| nameoffset   | u16               | flags1 & 0x20         | Has a movie name reference. This name is often used by the game to get the instance of this object.                                                      |
+| name_offset  | u16               | flags1 & 0x20         | Has a movie name reference. This name is often used by the game to get the instance of this object.                                                      |
 | unk3         | u16               | flags1 & 0x40         |                                                                                                                                                          |
 | blend        | u8                | flags1 & 0x20_000     | Has blend component.                                                                                                                                     |
 | ALIGN<4>     |                   |                       | Due to possible misalignment, we need to realign.                                                                                                        |
@@ -427,8 +439,8 @@ times at different depths.
 | mult_color   | Color_u8_reversed | flags1 & 0x2000       | Multiplicative color present, smaller integers.                                                                                                          |
 | add_color    | Color_u8_reversed | flags1 & 0x4000       | Additive color present, smaller integers.                                                                                                                |
 | event_data   | EventData         | flags1 & 0x80         | Bytecode similar to AS3.                                                                                                                                 |
-| filter_count | s16               | flags1 & 0x10_000     | Unknown filter data.                                                                                                                                     |
-| filter_size  | s16               | follows previous      | Unknown filter data.                                                                                                                                     |
+| filter_count | u16               | flags1 & 0x10_000     | Unknown filter data.                                                                                                                                     |
+| filter_size  | u16               | follows previous      | Unknown filter data.                                                                                                                                     |
 | rot_origin_x | s32               | flags1 & 0x1_000_000  | Rotation origin XY. Div by 20.                                                                                                                           |
 | rot_origin_y | s32               | follows previous      |                                                                                                                                                          |
 | rot_origin_z | s32               | flags2 & 0x2          | Rotation origin Z. Div by 20.                                                                                                                            |
@@ -437,20 +449,18 @@ times at different depths.
 | matrix_d     | s16               | follows previous      | Div by 32768.                                                                                                                                            |
 | matrix_b     | s16               | flags1 & 0x80_000     | Div by 32768.                                                                                                                                            |
 | matrix_c     | s16               | follows previous      | Div by 32768.                                                                                                                                            |
-| unk_4        | s16               | flags1 & 100_000      | Some unknown short.                                                                                                                                      |
+| unk_4        | u16               | flags1 & 0x100_000    | Some unknown short.                                                                                                                                      |
 | ALIGN<4>     |                   |                       | Due to possible misalignment, we need to realign.                                                                                                        |
 | transform_tz | s32               | flags1 & 0x8_000_000  | Translation offset "z" for a 3D transform matrix. Div by 20.                                                                                             |
-| transform_3D | s32[6]            | flags1 & 0x10_000_000 | A 3x3 grid of initializers for a 3D transform matrix. See bemaniutils/swf.py for details.                                                                |
-| hue          | s16               | flags1 & 0x20_000_000 | Div by 360.0                                                                                                                                             |
-| saturation   | s8                | follows previous      | Div by 100.0                                                                                                                                             |
-| lightness    | s8                | follows previous      | Div by 100.0                                                                                                                                             |
-|              |                   | flags2 & 0X4          | RAISE EXCEPTION: UNKNOWN/UNHANDLED                                                                                                                       |
+| transform_3D | s32[9]            | flags1 & 0x10_000_000 | A 3x3 grid of initializers for a 3D transform matrix. See bemaniutils/swf.py for details.                                                                |
+| hsl          | HSL               | flags1 & 0x20_000_000 | Hue, saturation, lightness.                                                                                                                              |
+|              |                   | flags2 & 0x4          | RAISE EXCEPTION: UNKNOWN/UNHANDLED                                                                                                                       |
 | mask_effect  | MaskEffect        | flags2 & 0x8          | This is a hacked-in effect for applying animated masks such as radial or linear wipes to the object.                                                     |
 | ap2_image_1  | u32, s16, s16     | flags2 & 0x10         | Haven't come across this yet. The two shorts are the same var as in flags2 & 0x20 though.                                                                |
 | ap2_image_2  | u16, s16, s16     | flags2 & 0x20         | Appears to be referencing the ifs texture canvas, with short 1 referencing an AP2_IMAGE_TAG id, and the next 2 shorts being the uv size of that texture. |
 | ALIGN<4>     |                   |                       | Due to possible misalignment, we need to realign.                                                                                                        |
 |              |                   | flags2 & 0x40         | RAISE EXCEPTION: UNKNOWN/UNHANDLED                                                                                                                       |
-| -----        | -----             | flags1 & 0x1          | True if updating an already placed object object.                                                                                                        |
+| -----        | -----             | flags1 & 0x1          | True if updating an already placed object.                                                                                                               |
 
 
 ### MaskEffect
@@ -514,13 +524,13 @@ ImportedTag imported_tags[attrs.imported_tags_count] @ attrs.imported_tags_offse
 ImportedTagsBaseInitializer imported_tags_bytecode @ attrs.imported_tag_initializers_offset;
 
 TagsBaseHeader tags_base_header @ attrs.tags_base_offset;
+Label labels[tags_base_header.frame_label_count] @ attrs.tags_base_offset + tags_base_header.frame_labels_offset;
+u32 funcnames_offset = attrs.tags_base_offset + tags_base_header.frame_labels_offset + (tags_base_header.frame_label_count * 4);
+Label funcnames[tags_base_header.funcname_count] @ funcnames_offset;
 Frame frames[tags_base_header.frame_count] @ attrs.tags_base_offset + tags_base_header.frame_offset;
 Tag tags[tags_base_header.tags_count] @ attrs.tags_base_offset + tags_base_header.tags_offset;
 
-Label labels[tags_base_header.frame_label_count] @ attrs.tags_base_offset + tags_base_header.frame_labels_offset;
 
-u32 funcnames_offset = attrs.tags_base_offset + tags_base_header.frame_labels_offset + (tags_base_header.frame_label_count * 4);
-Label funcnames[tags_base_header.funcname_count] @ funcnames_offset;
 
 ```
 
