@@ -369,7 +369,7 @@ fn fmt_element(ref Element data) {
     return std::format("x:{:.2f}, y:{:.2f}", (data.x / 20.0f), (data.y / 20.0f));
 };
 
-struct MaskEffect {    
+struct Transition {
     if (mask & (1 << bit)) {
         // read 2 shorts
         u16 unk_flags [[format_read("fmt_read_int_to_hex")]];  
@@ -393,7 +393,7 @@ struct MaskEffect {
     bit += 1;
 } [[format_read("fmt_mask_chunk")]];
 
-fn fmt_mask_chunk(ref MaskEffect data) {
+fn fmt_mask_chunk(ref Transition data) {
     if (std::core::has_member(data, "unk_flags")) {
         return "true";
     }
@@ -655,7 +655,7 @@ struct AP2PlaceObjectTag {
         unhandled_flags &= ~0x800000000;
         u32 bitmask [[format_read("fmt_read_int_to_hex")]];
         mask = bitmask;
-        MaskEffect maskEffect[while(read_bit() != 0)];
+        Transition transition[while(read_bit() != 0)];
     }
     
     if (flags & 0x1000000000) {

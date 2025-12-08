@@ -22,13 +22,14 @@
     * [struct Color_u8_reversed](#struct-coloru8reversed)
     * [struct Color_s16](#struct-colors16)
     * [struct Point](#struct-point)
+    * [struct HSL](#struct-hsl)
     * [struct AP2PlaceCameraTag](#struct-ap2placecameratag)
     * [struct AP2SpriteTag](#struct-ap2spritetag)
     * [struct AP2RemoveObjectTag](#struct-ap2removeobjecttag)
     * [struct EventData](#struct-eventdata)
     * [struct AP2DoAction](#struct-ap2doaction)
     * [struct AP2PlaceObjectTag](#struct-ap2placeobjecttag)
-    * [MaskEffect](#maskeffect)
+    * [Transition](#transition)
   * [AFP File Structure](#afp-file-structure)
     * [Tag Ordering](#tag-ordering)
   * [Playback](#playback)
@@ -455,21 +456,25 @@ times at different depths.
 | transform_3D | s32[9]            | flags1 & 0x10_000_000 | A 3x3 grid of initializers for a 3D transform matrix. See bemaniutils/swf.py for details.                                                                |
 | hsl          | HSL               | flags1 & 0x20_000_000 | Hue, saturation, lightness.                                                                                                                              |
 |              |                   | flags2 & 0x4          | RAISE EXCEPTION: UNKNOWN/UNHANDLED                                                                                                                       |
-| mask_effect  | MaskEffect        | flags2 & 0x8          | This is a hacked-in effect for applying animated masks such as radial or linear wipes to the object.                                                     |
+| transition   | Transition        | flags2 & 0x8          | This is a hacked-in effect for applying animated masks such as radial or linear wipes to the object.                                                     |
 | ap2_image_1  | u32, s16, s16     | flags2 & 0x10         | Haven't come across this yet. The two shorts are the same var as in flags2 & 0x20 though.                                                                |
 | ap2_image_2  | u16, s16, s16     | flags2 & 0x20         | Appears to be referencing the ifs texture canvas, with short 1 referencing an AP2_IMAGE_TAG id, and the next 2 shorts being the uv size of that texture. |
 | ALIGN<4>     |                   |                       | Due to possible misalignment, we need to realign.                                                                                                        |
 |              |                   | flags2 & 0x40         | RAISE EXCEPTION: UNKNOWN/UNHANDLED                                                                                                                       |
 | -----        | -----             | flags1 & 0x1          | True if updating an already placed object.                                                                                                               |
+| -----        | -----             | flags1 & 0x4          | Use transform matrix - These 3 flags are used by the renderer. They are implicitly enabled if the data for them exists.                                  |
+| -----        | -----             | flags1 & 0x8          | Use color information                                                                                                                                    |
+| -----        | -----             | flags1 & 0x4_000_000  | Use 3D Perspective transform system, else use 2D transform.                                                                                              |
 
 
-### MaskEffect
+### Transition
 This is a hacked-in effect for applying animated masks such as radial or linear wipes to the object. Flash authoring applications
-do not way have to create these effects, nor are they supported by the swf format. After Effects  *can* create these effects,
-but they must be rasterized to images before exporting to SWF, so I'm not sure how they created them unless they just wrote
-their own program to generate it and merged it in during the afp conversion process.
+do not way have to create these effects, nor are they supported by the swf format. After Effects  *can* create these effects—they 
+are called Transitions—but they must be rasterized to images before exporting to SWF because the format doesn't support it, so I'm 
+not sure how they created them unless they just wrote their own program to generate it and merged it in during the afp conversion 
+process, or perhaps they made their own AE plugin.
 
-That said, from what I've seen of it's usage in museca, it's a system that creates a shape from XY coordinate pairs and applies
+That said, from what I've seen of its usage in museca, it's a system that creates a shape from XY coordinate pairs and applies
 it to the object as a mask. A bitmask int at the start of the object indicates how many chunks there are to parse. The flag parsing
 seems to indicate that more than simple X/Y coordinate pairs or quads are supported, perhaps an effect like an iris wipe
 that requires more coordinates? I have yet to see any examples other than linear and radial though.
