@@ -377,9 +377,9 @@ of the main movie clip in a similar order. It has its own timeline that can be c
 | sprite_id           | u16                                                                                       |             | Object id                                                                                                                                            |
 | subtags_offset      | u32                                                                                       | flags & 0x1 | Not sure if this offset is really even necessary.                                                                                                    |
 | subtags_base_header | TagsBaseHeader                                                                            |             |                                                                                                                                                      |
-| frames              | Frame[subtags_base_header.frame_count] @ subtags_base_header.frames_offset                |             | * Relative to TagsBaseHeader                                                                                                                         |
-| subtags             | Tag[subtags_base_header.tags_counnt] @ subtags_base_header.tags_offset                    |             | * Relative to TagsBaseHeader                                                                                                                         |
-| labels              | Label[subtags_base_header.frame_label_count] @ subtags_base_header.frame_labels_offset    |             | * Relative to TagsBaseHeader                                                                                                                         |
+| frames              | Frame[subtags_base_header.frame_count] @ subtags_base_header.frames_offset                |             | * Relative to TagsBaseHeader start                                                                                                                   |
+| subtags             | Tag[subtags_base_header.tags_counnt] @ subtags_base_header.tags_offset                    |             | * Relative to TagsBaseHeader start                                                                                                                   |
+| labels              | Label[subtags_base_header.frame_label_count] @ subtags_base_header.frame_labels_offset    |             | * Relative to TagsBaseHeader start                                                                                                                   |
 | funcnames           | Label[subtags_base_header.funcname_count] @ (frame_label_count * 4) + frame_labels_offset |             | * Relative to TagsBaseHeader. This doesn't have an offset defined in the tagsbaseheader, but it always seems to follow right after the frame labels. |
 
 
@@ -396,11 +396,11 @@ Event triggers found within an AP2_PLACE_OBJECT tag. Some event triggers include
 and key movements and rollovers, followed by compiled bytecode similar to AS3 used for setting masks, toggling visibility, rewind/advance, etc. 
 See bemaniutils/swf.py and decompile.py for parsing details.
 
-| Field    | Type           | Comment            |
-|----------|----------------|--------------------|
-| flags    | u32            |                    |
-| length   | u32            |                    |
-| bytecode | char[length]   | Compiled bytecode. |
+| Field    | Type           | Comment                                                                                               |
+|----------|----------------|-------------------------------------------------------------------------------------------------------|
+| flags    | u32            |                                                                                                       |
+| length   | u32            |                                                                                                       |
+| bytecode | char[length-8] | Compiled bytecode. Length should probably be calculated better in accordance with bemaniutils swf.py. |
 
 ### struct AP2DoAction
 Compiled bytecode similar to AS3 used for setting masks, toggling visibility, rewind/advance, looping, etc.
@@ -417,62 +417,63 @@ one or the other, not both. Not all flags are fully understood.
 Places an object at the specified depth. Only one object can exist at each depth, but the same object can be placed multiple
 times at different depths.
 
-| Field        | Type              | Condition              | Comment                                                                                                                                                  |
-|--------------|-------------------|------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| flags1       | u32               |                        |                                                                                                                                                          |
-| depth        | u16               |                        |                                                                                                                                                          |
-| object_id    | u16               |                        |                                                                                                                                                          |
-| flags2       | u32               | flags1 & 0x80_000_000  |                                                                                                                                                          |
-| src_tag_id   | u16               | flags1 & 0x2           | Has a shape or movie component. This id references an already created object.                                                                            |
-| label_id     | u16               | flags1 & 0x10          | Has a label component.                                                                                                                                   |
-| name_offset  | u16               | flags1 & 0x20          | Has a movie name reference. This name is often used by the game to get the instance of this object.                                                      |
-| unk3         | u16               | flags1 & 0x40          |                                                                                                                                                          |
-| blend        | u8                | flags1 & 0x20_000      | Has blend component.                                                                                                                                     |
-| ALIGN<4>     |                   |                        | Due to possible misalignment, we need to realign.                                                                                                        |
-| matrix_a     | s32               | flags1 & 0x100         | Has scale component. Div by 1024.                                                                                                                        |
-| matrix_d     | s32               | follows previous       |                                                                                                                                                          |
-| matrix_b     | s32               | flags1 & 0x200         | Has a rotate component. Div by 1024.                                                                                                                     |
-| matrix_c     | s32               | follows previous       |                                                                                                                                                          |
-| matrix_tx    | s32               | flags1 & 0x400         | Has translate component. Div by 20.                                                                                                                      |
-| matrix_ty    | s32               | follows previous       |                                                                                                                                                          |
-| mult_color   | Color_s16         | flags1 & 0x800         | Multiplicative color present.                                                                                                                            |
-| add_color    | Color_s16         | flags1 & 0x1000        | Additive color present.                                                                                                                                  |
-| mult_color   | Color_u8_reversed | flags1 & 0x2000        | Multiplicative color present, smaller integers.                                                                                                          |
-| add_color    | Color_u8_reversed | flags1 & 0x4000        | Additive color present, smaller integers.                                                                                                                |
-| event_data   | EventData         | flags1 & 0x80          | Bytecode similar to AS3.                                                                                                                                 |
-| filter_count | u16               | flags1 & 0x10_000      | Unknown filter data.                                                                                                                                     |
-| filter_size  | u16               | follows previous       | Unknown filter data.                                                                                                                                     |
-| rot_origin_x | s32               | flags1 & 0x1_000_000   | Rotation origin XY. Div by 20.                                                                                                                           |
-| rot_origin_y | s32               | follows previous       |                                                                                                                                                          |
-| rot_origin_z | s32               | flags2 & 0x2           | Rotation origin Z. Div by 20.                                                                                                                            |
-| -----        | ------            | flags1 & 0x2_000_000   | Instruction to set previously read rotation origins to 0. There is no data to be read.                                                                   |
-| matrix_a     | s16               | flags1 & 0x40_000      | An alternative method for populating transform scaling. Appears in iidx and museca. Div by 32768.                                                        |
-| matrix_d     | s16               | follows previous       | Div by 32768.                                                                                                                                            |
-| matrix_b     | s16               | flags1 & 0x80_000      | Div by 32768.                                                                                                                                            |
-| matrix_c     | s16               | follows previous       | Div by 32768.                                                                                                                                            |
-| unk_4        | u16               | flags1 & 0x100_000     | Some unknown short.                                                                                                                                      |
-| ALIGN<4>     |                   |                        | Due to possible misalignment, we need to realign.                                                                                                        |
-| transform_tz | s32               | flags1 & 0x8_000_000   | Translation offset "z" for a 3D transform matrix. Div by 20.                                                                                             |
-| transform_3D | s32[9]            | flags1 & 0x10_000_000  | A 3x3 grid of initializers for a 3D transform matrix. See bemaniutils/swf.py for details.                                                                |
-| hsl          | HSL               | flags1 & 0x20_000_000  | Hue, saturation, lightness.                                                                                                                              |
-|              |                   | flags2 & 0x4           | RAISE EXCEPTION: UNKNOWN/UNHANDLED                                                                                                                       |
-| transition   | Transition        | flags2 & 0x8           | This is a hacked-in effect for applying animated masks such as radial or linear wipes to the object.                                                     |
-| ap2_image_1  | u32, s16, s16     | flags2 & 0x10          | Haven't come across this yet. The two shorts are the same var as in flags2 & 0x20 though.                                                                |
-| ap2_image_2  | u16, s16, s16     | flags2 & 0x20          | Appears to be referencing the ifs texture canvas, with short 1 referencing an AP2_IMAGE_TAG id, and the next 2 shorts being the uv size of that texture. |
-| ALIGN<4>     |                   |                        | Due to possible misalignment, we need to realign.                                                                                                        |
-|              |                   | flags2 & 0x40          | RAISE EXCEPTION: UNKNOWN/UNHANDLED                                                                                                                       |
-| -----        | -----             | flags1 & 0x1           | True if updating an already placed object.                                                                                                               |
-| -----        | -----             | flags1 & 0x4           | Use transform matrix - These 3 flags are used by the renderer. They are implicitly enabled if the data for them exists.                                  |
-| -----        | -----             | flags1 & 0x8           | Use color information                                                                                                                                    |
-| -----        | -----             | flags1 & 0x4_000_000   | Use 3D Perspective transform system, else use 2D transform.                                                                                              |
+| Field        | Type              | Condition              | Comment                                                                                                                                                                   |
+|--------------|-------------------|------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| flags1       | u32               |                        |                                                                                                                                                                           |
+| depth        | u16               |                        |                                                                                                                                                                           |
+| object_id    | u16               |                        |                                                                                                                                                                           |
+| flags2       | u32               | flags1 & 0x80_000_000  |                                                                                                                                                                           |
+| src_tag_id   | u16               | flags1 & 0x2           | Has a shape or movie component. This id references an already created object.                                                                                             |
+| label_id     | u16               | flags1 & 0x10          | Has a label component.                                                                                                                                                    |
+| name_offset  | u16               | flags1 & 0x20          | Has a movie name reference. This name is often used by the game to get the instance of this object.                                                                       |
+| unk3         | u16               | flags1 & 0x40          |                                                                                                                                                                           |
+| blend        | u8                | flags1 & 0x20_000      | Has blend component.                                                                                                                                                      |
+| ALIGN<4>     |                   |                        | Due to possible misalignment, we need to realign.                                                                                                                         |
+| matrix_a     | s32               | flags1 & 0x100         | Has scale component. Div by 1024.                                                                                                                                         |
+| matrix_d     | s32               | follows previous       |                                                                                                                                                                           |
+| matrix_b     | s32               | flags1 & 0x200         | Has a rotate component. Div by 1024.                                                                                                                                      |
+| matrix_c     | s32               | follows previous       |                                                                                                                                                                           |
+| matrix_tx    | s32               | flags1 & 0x400         | Has translate component. Div by 20.                                                                                                                                       |
+| matrix_ty    | s32               | follows previous       |                                                                                                                                                                           |
+| mult_color   | Color_s16         | flags1 & 0x800         | Multiplicative color present.                                                                                                                                             |
+| add_color    | Color_s16         | flags1 & 0x1000        | Additive color present.                                                                                                                                                   |
+| mult_color   | Color_u8_reversed | flags1 & 0x2000        | Multiplicative color present, smaller integers.                                                                                                                           |
+| add_color    | Color_u8_reversed | flags1 & 0x4000        | Additive color present, smaller integers.                                                                                                                                 |
+| event_data   | EventData         | flags1 & 0x80          | Bytecode similar to AS3.                                                                                                                                                  |
+| filter_count | u16               | flags1 & 0x10_000      | Unknown filter data.                                                                                                                                                      |
+| filter_size  | u16               | follows previous       | Unknown filter data.                                                                                                                                                      |
+| rot_origin_x | s32               | flags1 & 0x1_000_000   | Rotation origin XY. Div by 20.                                                                                                                                            |
+| rot_origin_y | s32               | follows previous       |                                                                                                                                                                           |
+| rot_origin_z | s32               | flags2 & 0x2           | Rotation origin Z. Div by 20.                                                                                                                                             |
+| -----        | ------            | flags1 & 0x2_000_000   | Instruction to set previously read rotation origins to 0. There is no data to be read.                                                                                    |
+| matrix_a     | s16               | flags1 & 0x40_000      | An alternative method for populating transform scaling. Appears in iidx and museca. Div by 32768.                                                                         |
+| matrix_d     | s16               | follows previous       | Div by 32768.                                                                                                                                                             |
+| matrix_b     | s16               | flags1 & 0x80_000      | Div by 32768.                                                                                                                                                             |
+| matrix_c     | s16               | follows previous       | Div by 32768.                                                                                                                                                             |
+| unk_4        | u16               | flags1 & 0x100_000     | Some unknown short.                                                                                                                                                       |
+| ALIGN<4>     |                   |                        | Due to possible misalignment, we need to realign.                                                                                                                         |
+| transform_tz | s32               | flags1 & 0x8_000_000   | Translation offset "z" for a 3D transform matrix. Div by 20.                                                                                                              |
+| transform_3D | s32[9]            | flags1 & 0x10_000_000  | A 3x3 grid of initializers for a 3D transform matrix. See bemaniutils/swf.py for details.                                                                                 |
+| hsl          | HSL               | flags1 & 0x20_000_000  | Hue, saturation, lightness.                                                                                                                                               |
+|              |                   | flags2 & 0x4           | RAISE EXCEPTION: UNKNOWN/UNHANDLED                                                                                                                                        |
+| transition   | Transition        | flags2 & 0x8           | This is a hacked-in effect for applying animated masks such as radial or linear wipes to the object.                                                                      |
+| ap2_image_1  | u32, s16, s16     | flags2 & 0x10          | Haven't come across this yet. The two shorts are the same var as in flags2 & 0x20 though.                                                                                 |
+| ap2_image_2  | u16, s16, s16     | flags2 & 0x20          | Appears to be referencing the ifs texture canvas, with short 1 referencing an AP2_IMAGE_TAG id, and the next 2 shorts being the uv size of that texture.                  |
+| ALIGN<4>     |                   |                        | Due to possible misalignment, we need to realign.                                                                                                                         |
+|              |                   | flags2 & 0x40          | RAISE EXCEPTION: UNKNOWN/UNHANDLED                                                                                                                                        |
+| -----        | -----             | flags1 & 0x1           | True if updating an already placed object.                                                                                                                                |
+| -----        | -----             | flags1 & 0x4           | Use transform matrix - These 3 flags are used by the renderer. They are implicitly enabled if the data for them exists.                                                   |
+| -----        | -----             | flags1 & 0x8           | Use color information. If this flag is set, but none of the other color flags are set, the color is treated as default and visible (i.e. 255,255,255,255 for mult_color). |
+| -----        | -----             | flags1 & 0x4_000_000   | Use 3D Perspective transform system, else use 2D transform.                                                                                                               |
 
 
-### Transition
+### Transition / Mask Effect
 This is a hacked-in effect for applying animated masks such as radial or linear wipes to the object. Flash authoring applications
 do not way have to create these effects, nor are they supported by the swf format. After Effects  *can* create these effects—they 
 are called Transitions—but they must be rasterized to images before exporting to SWF because the format doesn't support it, so I'm 
 not sure how they created them unless they just wrote their own program to generate it and merged it in during the afp conversion 
-process, or perhaps they made their own AE plugin.
+process, or perhaps they made their own AE plugin. Or perhaps they just drew them manually, but there are some oddities that do
+make them seem like they could have been automatically generated.
 
 That said, from what I've seen of its usage in museca, it's a system that creates a shape from XY coordinate pairs and applies
 it to the object as a mask. A bitmask int at the start of the object indicates how many chunks there are to parse. The flag parsing
@@ -480,7 +481,8 @@ seems to indicate that more than simple X/Y coordinate pairs or quads are suppor
 that requires more coordinates? I have yet to see any examples other than linear and radial though.
 The format is too complicated for a markdown table, so I will notate it below. 
 
-        u32 bitmask; // each bit represents one chunk to parse.
+        u32 bitmask; // each bit represents one chunk / slot to parse, so there are 32 possible slots. 
+                     // Multiple slots can be active at a time.
         for bit in range(32):
             if bool(bitmask & (1 << bit)):
                 u16 unk_flags, coord_count; // read 2 shorts
@@ -500,12 +502,12 @@ The format is too complicated for a markdown table, so I will notate it below.
             s16 coords[short_count]; // Read x amount of signed shorts. These are expressed in 
                                      // twips, so divide them by 20 to get the real coordinate.
 
-Below is an example of the radial wipe from museca's title screen. The first frame appears to create 5 quads, though only 
-one of them is inside the display area. The 4th chunk has flag 1 set, so there are 8 coordinate pairs in the chunk, but every
-Y coordinate is 0 so it seems to create a flat line that does nothing.  
+Below is an example of the radial wipe from museca's title screen. The first frame appears to insantiate 3 quads, but there
+is a 4th one along the X axis has flag 1 set, so there are 8 coordinate pairs, and every Y coordinate is 0. A bit strange.
 The quads also appear to be optimized in a way that they try to create a new quad at every 90 degree angle reached. Otherwise,
-it continues morphing the shape past 90 degrees, as seen in the 4th quad around frame 22. It even masks beyond the start angle 
-to ensure the image is fully revealed.
+it continues morphing the shape past 90 degrees, as seen in the 4th quad around frame 22. This quad was instantiated with 8 
+coord pairs, but only 4 were ever used, so it's kind of a headscratcher. After quad 4 is finished, the first slot is utilized 
+again to complete the reveal beyond the original starting point.
 
 <img src="images/museca-radialwipe.gif" alt="drawing" width="500"/>
 
@@ -535,7 +537,7 @@ Label funcnames[tags_base_header.funcname_count] @ funcnames_offset;
 Frame frames[tags_base_header.frame_count] @ attrs.tags_base_offset + tags_base_header.frame_offset;
 Tag tags[tags_base_header.tags_count] @ attrs.tags_base_offset + tags_base_header.tags_offset;
 
-
+Tags can recurse into sprites, which use relative offsets.
 
 ```
 
@@ -550,9 +552,13 @@ There are two main categories of tags:
 
 In a tag list, definition tags will always come before control tags. This is likely to build a dictionary of objects in 
 the afp library before playback starts, much like SWF, but also because a control tag cannot reference an object that has
-not yet been defined. Therefore, all objects must be defined before any action that depends on them can be performed.
+not yet been defined. Therefore, all objects must be defined before any action that depends on them can be performed.  
 
-Unlike SWF, there is no END tag at the end of the file. 
+Modern afp files appear to have frame 1 start playing tags at the first place object tag after the last definition tag, but 
+older files may have frame 1 start playing at tag index 0 - similar to flash behavior where all definition tags are placed 
+in frame 1. 
+
+Unlike SWF, there is no END tag at the end of sprites or at the end of the file.
 
 ## Playback
 The way AFP files are played highlights a key difference between AFP and SWF. The frames of an SWF file are determined 
