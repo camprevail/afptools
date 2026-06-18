@@ -251,6 +251,8 @@ struct AP2Attributes {
     u32 stringtable_size;
     if (header.flags & 0x4) {
         u32 imported_tag_initializers_offset [[format_read("hex")]];
+    } else {
+        u32 imported_tag_initializers_offset = null;
     }
 };
 AP2Attributes attrs @ $;
