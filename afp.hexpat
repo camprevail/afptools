@@ -353,6 +353,7 @@ struct AP2ImageTag {
 
 u32 bit = 0;
 u32 mask = 0;
+u16 g_vertex_flags = 0;  // current slot's vertex_flags; gates coord width (0x1) & tangents (0x10)
 fn read_bit() {
     if (bit < 32) {
         return true;
@@ -362,41 +363,45 @@ fn read_bit() {
     }
 };
 
-struct Element {
-    s16 x [[format_read("fmt_read_flt_div20"), format_write("fmt_write_s16_flt_div20")]];
-    s16 y [[format_read("fmt_read_flt_div20"), format_write("fmt_write_s16_flt_div20")]];
-} [[format_read("fmt_element")]];
+// One X/Y coordinate pair, in twips (divide by 20 for pixels). The component width is
+// s16 or s32 depending on the slot's vertex_flags & 0x1 (stashed in the g_vertex_flags
+// global before the vertices are placed). See afptools/VECTOR_MASK.md.
+struct MaskCoord {
+    if (g_vertex_flags & 0x1) {
+        s32 x [[format_read("fmt_read_flt_div20"), format_write("fmt_write_flt_div20")]];
+        s32 y [[format_read("fmt_read_flt_div20"), format_write("fmt_write_flt_div20")]];
+    } else {
+        s16 x [[format_read("fmt_read_flt_div20"), format_write("fmt_write_s16_flt_div20")]];
+        s16 y [[format_read("fmt_read_flt_div20"), format_write("fmt_write_s16_flt_div20")]];
+    }
+} [[format_read("fmt_maskcoord")]];
 
-fn fmt_element(ref Element data) {
-    return std::format("x:{:.2f}, y:{:.2f}", (data.x / 20.0f), (data.y / 20.0f));
+fn fmt_maskcoord(ref MaskCoord data) {
+    return std::format("x:{:.2f}, y:{:.2f}", (data.x / 20.0), (data.y / 20.0));
 };
 
-struct Transition {
-    if (mask & (1 << bit)) {
-        // read 2 shorts
-        u16 unk_flags [[format_read("fmt_read_int_to_hex")]];  
-        u16 coord_count; 
-        
-        u32 short_count = (
-            // Either 2 or 6, depending on unk_flags & 0x10 set.
-            (((unk_flags & 0x10) | 0x8) >> 2)
-            *
-            // Either 1 or 2, depending on unk_flags & 0x1 set.
-            // Seems to indicate whether there are 1 or 2 quads in this segment?
-            ((unk_flags & 1) + 1)
-            *
-            // Count read from the header above.
-            coord_count
-        );
+// One path vertex: an anchor, plus (when vertex_flags & 0x10) two bezier tangent handles.
+struct MaskVertex {
+    MaskCoord anchor;
+    if (g_vertex_flags & 0x10) {
+        MaskCoord tangent_in;
+        MaskCoord tangent_out;
+    }
+};
 
-        Element coord_chunk[short_count / 2]; // Read x amount of signed shorts. These are expressed in 
-                                              // twips, so divide them by 20 to get the real coordinate.
+struct VectorMask {
+    if (mask & (1 << bit)) {
+        // Per-slot header: only bits 0x1 (coord width s16/s32) and 0x10 (has tangents) matter.
+        u16 vertex_flags [[format_read("fmt_read_int_to_hex")]];
+        u16 vertex_count;
+        g_vertex_flags = vertex_flags;  // gate MaskCoord width / MaskVertex tangents below
+        MaskVertex vertices[vertex_count];
     }
     bit += 1;
 } [[format_read("fmt_mask_chunk")]];
 
-fn fmt_mask_chunk(ref Transition data) {
-    if (std::core::has_member(data, "unk_flags")) {
+fn fmt_mask_chunk(ref VectorMask data) {
+    if (std::core::has_member(data, "vertex_flags")) {
         return "true";
     }
     return "";
@@ -657,7 +662,7 @@ struct AP2PlaceObjectTag {
         unhandled_flags &= ~0x800000000;
         u32 bitmask [[format_read("fmt_read_int_to_hex")]];
         mask = bitmask;
-        Transition transition[while(read_bit() != 0)];
+        VectorMask vector_mask[while(read_bit() != 0)];
     }
     
     if (flags & 0x1000000000) {

@@ -426,7 +426,7 @@ times at different depths.
 | src_tag_id   | u16               | flags1 & 0x2           | Has a shape or movie component. This id references an already created object.                                                                                               |
 | label_id     | u16               | flags1 & 0x10          | Has a label component. Usage unknown.                                                                                                                                       |
 | name_offset  | u16               | flags1 & 0x20          | Has a movie name reference. This name is often used by the game to get the instance of this object.                                                                         |
-| unk3         | u16               | flags1 & 0x40          |                                                                                                                                                                             |
+| unk3         | u16               | flags1 & 0x40          | Likely an SWF-style ClipDepth. Need to test this to verify.                                                                                                                 |
 | blend        | u8                | flags1 & 0x20_000      | Has blend component.                                                                                                                                                        |
 | ALIGN<4>     |                   |                        | Due to possible misalignment, we need to realign.                                                                                                                           |
 | matrix_a     | s32               | flags1 & 0x100         | Has scale component. Div by 1024.                                                                                                                                           |
@@ -456,7 +456,7 @@ times at different depths.
 | transform_3D | s32[9]            | flags1 & 0x10_000_000  | A 3x3 grid of initializers for a 3D transform matrix. See bemaniutils/swf.py for details.                                                                                   |
 | hsl          | HSL               | flags1 & 0x20_000_000  | Hue, saturation, lightness.                                                                                                                                                 |
 |              |                   | flags2 & 0x4           | RAISE EXCEPTION: UNKNOWN/UNHANDLED                                                                                                                                          |
-| transition   | Transition        | flags2 & 0x8           | This is a hacked-in effect for applying animated masks such as radial or linear wipes to the object.                                                                        |
+| vector_mask  | VectorMask        | flags2 & 0x8           | This is a custom vector mask structure for applying masks to the object. Often used to create animated linear or radial wipes.                                              |
 | ap2_image_1  | u32, s16, s16     | flags2 & 0x10          | Haven't come across this yet. The two shorts are the same var as in flags2 & 0x20 though.                                                                                   |
 | ap2_image_2  | u16, s16, s16     | flags2 & 0x20          | Appears to be referencing the ifs texture canvas, with short 1 referencing an AP2_IMAGE_TAG id, and the next 2 shorts being the uv size of that texture.                    |
 | ALIGN<4>     |                   |                        | Due to possible misalignment, we need to realign.                                                                                                                           |
@@ -467,47 +467,78 @@ times at different depths.
 | -----        | -----             | flags1 & 0x4_000_000   | Use 3D Perspective transform system, else use 2D transform.                                                                                                                 |
 
 
-### Transition / Mask Effect
-This is a hacked-in effect for applying animated masks such as radial or linear wipes to the object. Flash authoring applications
-do not way have to create these effects, nor are they supported by the swf format. After Effects  *can* create these effects—they 
-are called Transitions—but they must be rasterized to images before exporting to SWF because the format doesn't support it, so I'm 
-not sure how they created them unless they just wrote their own program to generate it and merged it in during the afp conversion 
-process, or perhaps they made their own AE plugin. Or perhaps they just drew them manually, but there are some oddities that do
-make them seem like they could have been automatically generated.
+### Vector Masks
+Another konami addition to the AP2PlaceObject Tag - This structure can apply persistent rect masks to the object.
+It has 32 slots to store shapes and appears to also support curved edges, but I have yet to run into any animations 
+that use the curved edge data.  
+Often times these are used to create transition effects similar to those in After Effects. Flash authoring applications 
+do not have any way to create these effects though, nor are they supported by the swf format. The closest thing would be 
+clipping masks, which afp *might* support, but I have yet to run into an animation that supports that (unk3 field).
+I'm not exactly sure how they drew these masks, probably hand-drawn in most cases but there are some cases that make 
+it seem like a generator could have been used. The first frame of the museca title screen radial wipe is a good example 
+of that.
 
-That said, from what I've seen of its usage in museca, it's a system that creates a shape from XY coordinate pairs and applies
-it to the object as a mask. A bitmask int at the start of the object indicates how many chunks there are to parse. The flag parsing
-seems to indicate that more than simple X/Y coordinate pairs or quads are supported, perhaps an effect like an iris wipe
-that requires more coordinates? I have yet to see any examples other than linear and radial though.
-The format is too complicated for a markdown table, so I will notate it below. 
+That said, from what I've seen of its usage in museca, it's a system that creates a shape from XY coordinate pairs and 
+applies it to the object as a mask. A bitmask int at the start of the object indicates how many slots there are to parse.
+The format is too complicated for a markdown table, so I will notate it with the parsing code from bemaniutils below.
+There are better ways to write this, (see [VECTOR_MASK.md](VECTOR_MASK.md)), but this is more representative of how 
+afp-core parses it.
 
         u32 bitmask; // each bit represents one chunk / slot to parse, so there are 32 possible slots. 
-                     // Multiple slots can be active at a time.
+                     // Multiple slots can be active at a time, and slot states are stored after being set.
         for bit in range(32):
             if bool(bitmask & (1 << bit)):
-                u16 unk_flags, coord_count; // read 2 shorts
+                u16 vertex_flags, coord_count; // read 2 shorts
 
             short_count = (
-                # Either 2 or 6, depending on unk_flags & 0x10 set.
+                # Either 2 or 6, depending on vertex_flags & 0x10 set. 0x10 indicates an anchor and 2 tangents (x2).
                 (((unk_flags & 0x10) | 0x8) >> 2)
                 *
-                # Either 1 or 2, depending on unk_flags & 0x1 set.
-                # Seems to indicate whether there are 1 or 2 quads in this segment?
+                # Either 1 or 2, depending on vertex_flags & 0x1 set.
+                # Indicates whether 16bit or 32bit coordinates are present.
                 ((unk_flags & 1) + 1)
                 *
                 # Count read from the header above.
-                coord_count maybe?
+                coord_count
             )
 
             s16 coords[short_count]; // Read x amount of signed shorts. These are expressed in 
                                      // twips, so divide them by 20 to get the real coordinate.
 
-Below is an example of the radial wipe from museca's title screen. The first frame appears to insantiate 3 quads, but there
-is a 4th one along the X axis has flag 1 set, so there are 8 coordinate pairs, and every Y coordinate is 0. A bit strange.
-The quads also appear to be optimized in a way that they try to create a new quad at every 90 degree angle reached. Otherwise,
-it continues morphing the shape past 90 degrees, as seen in the 4th quad around frame 22. This quad was instantiated with 8 
-coord pairs, but only 4 were ever used, so it's kind of a headscratcher. After quad 4 is finished, the first slot is utilized 
-again to complete the reveal beyond the original starting point.
+<u>VectorMask</u>  
+
+| Field   | Type           | Comment                                                                   |
+|---------|----------------|---------------------------------------------------------------------------|
+| bitmask | u32            | bit i set => slot i is present (slots are stored in ascending bit order). |
+| slots   | List[MaskSlot] | One MaskSlot for every bit set in the bitmask                             |
+
+<u>MaskSlot</u>  
+
+| Field        | Type             | Comment                                                                                 |
+|--------------|------------------|-----------------------------------------------------------------------------------------|
+| vertex_flags | u16              | Only 0x1 and 0x10 flags are used. Coordinate width is determined by vertex_flags & 0x1  |
+| vertex_count | u16              | Either 2 or 6, depending on vertex_flags & 0x10 set.                                    |
+| vertices     | List[MaskVertex] |                                                                                         |
+
+<u>MaskVertex</u>  
+Coordinate width is determined by vertex_flags & 0x1. Not set = s16, set = s32.
+
+| Field       | Type             | Comment                                                                   |
+|-------------|------------------|---------------------------------------------------------------------------|
+| anchor      | Tuple(s16/s32)   | bit i set => slot i is present (slots are stored in ascending bit order). |
+| tangent_in  | Tuple(s16/s32)   | Optional, present if fertex flags & 0x10 is set.                          |
+| tangent_out | Tuple(s16/s32)   | Optional, present if fertex flags & 0x10 is set.                          |
+
+
+Below is an example of the radial wipe from museca's title screen. The first frame appears to insantiate 4 quads, but 3 
+of them are offscreen. It seems that the shapes are stored offscreen when not in use. The vector mask data only contains 
+data for slots that are being instantiated or updated as a file optimization measure, but the slot states are stored and 
+rendered in-game persistently.  
+The quads also appear to be optimized in a way that they try to create a new quad at every 90 degree angle reached. Not 
+sure if that adds any merit to the computer-generated animation theory, just an observation. It could very well be hand-
+drawn.  
+After the first wipe is completed, the first slot is activated again to collapse the mask for the second wipe. The 
+shapes are moved back offscreen one by one as they collapse, fully hiding the object by the end.
 
 <img src="images/museca-radialwipe.gif" alt="drawing" width="500"/>
 
