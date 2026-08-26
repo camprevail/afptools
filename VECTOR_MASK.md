@@ -26,10 +26,18 @@ Sources analysed:
 
 - The Vector Mask (`flags2 & 0x8`) is a **custom animated vector mask** encoded as a `u32` slot
   bitmask followed by per-slot vertex-record chunks. Museca parses it; NBT ignores it.
-- The mystery `unk_flags` field has **only two meaningful bits**:
-  - `0x1` = coordinate **component width**: s16 (1 short) vs s32 (2 shorts).
-  - `0x10` = record **shape/stride**: straight anchor-only vertex (2 components) vs. anchor + 2
-    tangent handles (6 components, a bezier/curved segment).
+- The per-slot `vertex_flags` (`unk_flags`) field packs two sub-fields:
+  - **Layout** (read by the parser + geometry builder, determines byte stride):
+    - `0x1` = coordinate **component width**: s16 (1 short) vs s32 (2 shorts).
+    - `0x10` = record **shape/stride**: straight anchor-only vertex (2 components) vs. anchor + 2
+      tangent handles (6 components, a bezier/curved segment).
+  - **Triangulation mode** (read only by the triangulator `sub_7FF9E2E53CC0`): bits `0x2 / 0x4 / 0x8 /
+    0x10 / 0x20` select how the polygon is triangulated (tessellate vs. convex triangle-fan vs.
+    ear-clip) and whether its winding is normalized. See [`vertex_flags` decode](#vertex_flags-decode).
+  - **Constant framing bits**: across all scanned Museca content, `0x8` and `0x8000` are set on 100% of
+    slots (`0x8008` is the base value). `0x8000` is read by no code — an always-present marker; `0x8`
+    (always set) means the winding-normalization branch is never taken in practice. See
+    [Observed in the wild](#observed-in-the-wild-museca-content-census).
 - `flags2 & 0x40` is a **Colored Vector Mask** — the same vector format plus an indexed RGBA color
   palette (afputils previously marked this bit "UNKNOWN/UNHANDLED"). It feeds the same geometry builder
   as `0x8`.
@@ -95,13 +103,106 @@ away with ignoring it).
 
 ### `vertex_flags` decode
 
-Only bits `0x1` and `0x10` are ever tested (in both the parser and the geometry builder). All other
-bits are unused/reserved (preserve them for round-trip).
+The **parser** and the **geometry builder** (`AfpVectorMask_build_geometry`) only ever test bits
+`0x1` and `0x10` — those two fully determine the record stride and coordinate width, i.e. how many
+bytes each slot occupies:
 
 | bit    | name             | 0                                   | 1                                                |
 |-------:|------------------|-------------------------------------|--------------------------------------------------|
 | `0x1`  | `coords_are_s32` | s16 — 1 short per component         | s32 — 2 shorts per component                     |
 | `0x10` | `has_tangents`   | anchor XY only (straight)           | anchor XY + 2 tangent handles (curved / bezier)  |
+
+**But other bits are live too** — just consumed one level deeper. The applier
+(`AfpMc_apply_vector_mask`) stashes the *whole* `vertex_flags` word verbatim into each slot header at
+`slot+0x10`, and the per-slot **triangulator** `sub_7FF9E2E53CC0` (called once per slot with
+`vertex_count >= 3` at the end of `AfpVectorMask_build_geometry`) reads it back and branches on bits
+`0x2 / 0x4 / 0x8 / 0x10 / 0x20` to choose **how the polygon is triangulated** and whether its winding is
+normalized. So `vertex_flags` is really two fields packed together: a *layout* field (`0x1`, `0x10`)
+and a *triangulation-mode* field (`0x2`, `0x4`, `0x8`, `0x20`, plus `0x10` again).
+
+Earlier notes recorded a value of `0x800C` (= `0x8 | 0x4 | 0x8000`) in the wild, which is what surfaced
+these extra bits.
+
+#### Triangulation-mode bits (read only in `sub_7FF9E2E53CC0`)
+
+The triangulator loads `flags = word[slot+0x10]` and does, in order:
+
+1. **Winding-normalization gate** — `if ((flags & 0x1A) == 0)` (i.e. none of `0x2 | 0x8 | 0x10`): run a
+   leftmost-vertex + edge cross-product pass to detect CW vs CCW and reverse the index order to
+   normalize winding. Setting any of those three bits **skips** normalization and feeds the polygon in
+   its authored vertex order. (This is the effect of bit `0x8` on its own.)
+2. **Mode dispatch** — mutually exclusive, in this priority:
+
+| test                       | triangulation path                                             | meaning                                                            |
+|----------------------------|----------------------------------------------------------------|--------------------------------------------------------------------|
+| `flags & 0x10`             | GLU-tess-style contour tessellator (`sub_7FF9E2EE8A20`/`…9120`) | the curved / tangent case (`has_tangents`)                         |
+| `flags & 0x2`              | contour tessellator `sub_7FF9E2E547F0(…, mode 0)`              | tessellated fill                                                   |
+| `flags & 0x4`              | inline **triangle-fan** from vertex 0 (`n-2` tris)*             | polygon is **convex** — skip the general triangulator, just fan it |
+| else, `a3 && !(flags&0x20)`| contour tessellator `sub_7FF9E2E547F0(…, mode 0)`              | render-time tessellated fill                                       |
+| else (default)             | **ear-clipping** `sub_7FF9E2E54AD0`                            | general concave-polygon triangulation                              |
+
+\* the `0x4` fan branch instead routes to `sub_7FF9E2E547F0(…, mode 1)` when `a3 && !(flags & 0x20)`;
+bit `0x20` thus modifies whether `0x4`/default use the inline fan or the contour tessellator. `a3` is a
+render-time argument (the colored/second-channel pass), not part of `vertex_flags`.
+
+A **triangle-fan** (bit `0x4`) fixes vertex 0 as a pivot and emits `(v0, v1, v2), (v0, v2, v3), …,
+(v0, v(n-2), v(n-1))` — `n-2` triangles all sharing `v0`. It is only correct for convex polygons, which
+is why it's a distinct opt-in bit rather than the default ear-clipper.
+
+So for the observed `0x800C`: `0x8` suppresses winding normalization, `0x4` selects the convex
+triangle-fan, `0x10` is clear (straight records, stride 2), `0x1` is clear (s16 coords). Bit `0x8000`
+is **not tested anywhere** in the pipeline (parser, applier, builder, or triangulator) in the Museca
+build — carried verbatim but unread.
+
+Note (see [Observed in the wild](#observed-in-the-wild-museca-content-census)): across all scanned Museca
+content, **`0x8` and `0x8000` are set on 100% of slots** — they are constant framing bits, not per-slot
+options. So `0x8000` is really an always-present marker/version bit (not "usually zero, reserved"), and
+because `0x8` is always set, the `(flags & 0x1A) == 0` winding-normalization branch is never taken in
+practice (the authoring tool always emits pre-wound vertices). Preserve both bits on round-trip.
+
+| bit      | consumed by                          | effect                                                                 |
+|---------:|--------------------------------------|------------------------------------------------------------------------|
+| `0x1`    | parser, builder                      | coord component width (s16 / s32)                                      |
+| `0x2`    | triangulator                         | tessellated-fill mode; also skips winding normalization                |
+| `0x4`    | triangulator                         | convex triangle-fan mode                                               |
+| `0x8`    | triangulator                         | skip winding normalization — **set on 100% of observed slots**         |
+| `0x10`   | parser, builder, triangulator        | has_tangents (stride 6); selects the curved contour-tessellator path   |
+| `0x20`   | triangulator                         | modifies `0x4`/default: inline fan vs. contour tessellator             |
+| `0x8000` | (none)                               | not read anywhere; **set on 100% of observed slots** — constant marker |
+| others   | (none)                               | unused/reserved — preserve for round-trip                              |
+
+### Observed in the wild (Museca content census)
+
+A scan of the Museca `pix_*` afp animations (637 afp files across 41 `*_ifs` folders; 285 contain vector
+masks; 69,898 mask slots total; 0 parse errors) found these ten distinct `vertex_flags` values. **Every
+slot has `0x8 | 0x8000` set** (`0x8008` is the base); the varying bits are exactly the layout/mode
+selectors `0x1 / 0x2 / 0x4 / 0x10 / 0x20`.
+
+| value    | slots  | files | mode bits (beyond `0x8`\|`0x8000`) | triangulation path            |
+|----------|-------:|------:|------------------------------------|-------------------------------|
+| `0x8008` |  1,078 |    39 | —                                  | default ear-clip              |
+| `0x8009` |     24 |     3 | s32                                | ear-clip, 32-bit coords       |
+| `0x800A` |      6 |     2 | `0x2`                              | contour tessellator           |
+| `0x800C` | 55,503 |   264 | `0x4`                              | triangle-fan (by far the most common) |
+| `0x800D` |  1,517 |    17 | `0x4` + s32                        | fan, 32-bit coords            |
+| `0x8018` |  1,734 |    15 | `0x10`                             | curved/bezier tessellator     |
+| `0x8019` |     63 |     8 | `0x10` + s32                       | curved, 32-bit coords         |
+| `0x8028` |     22 |     2 | `0x20`                             | `0x20` alone                  |
+| `0x802C` |  9,793 |    92 | `0x4` + `0x20`                     | fan + `0x20`                  |
+| `0x8038` |    158 |     2 | `0x10` + `0x20`                    | tangents + `0x20`             |
+
+Notable sample locations (afp within each `*_ifs`):
+
+- **`0x2` (tessellate, rarest)** — only `pix_play_msg_ifs/pms_gauge_all` and `pms_gauge_connect`.
+- **`0x10` (curved/tangents)** — concentrated in `pix_prologue_ifs/dr_*` (drama-scene word wipes),
+  plus `pix_reward_ifs/reward_all` and `pix_story_ifs/shutter*`.
+- **`0x20` alone (`0x8028`)** — `pix_info_ifs/inf_caution`, `pix_mission_res_ef_ifs/release_ef_all`.
+- **`0x20` with fan (`0x802C`)** — widespread (92 files): `pix_card_entry`, `pix_grafica_res`,
+  `pix_mission_sel`, `pix_prologue`, `pix_rankup`, etc.
+- **`0x4` fan (`0x800C`)** — the default wipe shape; present in 264 of the 285 masked files.
+
+`0x1` (s32 coordinates) is rare overall (`0x8009` / `0x800D` / `0x8019`, ~1.6k slots) — most masks fit
+in s16 twips.
 
 ### Vertex record layout
 
@@ -133,7 +234,7 @@ Pipeline: **parse → apply/store → build geometry per frame → render.**
 | apply/store  | `AfpMc_apply_vector_mask`         | attaches an effect slot to the `AfpMc`; sizes & allocates the mesh    |
 | effect slot  | `AfpMc_get_or_create_effect_slot`     | shared with ap2_image + bitmap overlays                               |
 | build geom   | `AfpVectorMask_build_geometry`   | anchors→vertex buffer, tangents→extra buffer, triangulate, bbox       |
-| triangulate  | `sub_...E53CC0` (unnamed)             | produces the `3*(n-2)` index mesh per slot                            |
+| triangulate  | `sub_...E53CC0` (unnamed)             | produces the `3*(n-2)` index mesh per slot; **reads `vertex_flags` bits `0x2/0x4/0x8/0x10/0x20`** to pick the triangulation mode + winding (see [decode](#vertex_flags-decode)) |
 
 ### `AfpMc_apply_vector_mask` behaviour (the `0x8` applier)
 
