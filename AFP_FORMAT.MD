@@ -155,17 +155,17 @@ in practice. Konami added their own AP2 tags onto the end of the table.
 The header section at the top of the afp file. The flags are not fully understood. Some determine what is parsed in the 
 AP2Attributes struct. Flags & 0x8 seems to disable the AP2_DO_ACTION tags. 
 
-| Field      | Type    | Comment                                                                                                                      |
-|------------|---------|------------------------------------------------------------------------------------------------------------------------------|
-| magic      | char[4] | First byte is the version id. The whole thing can be decoded to AP2 by reading in little endian and & 0x7f7f7f00.            |
-| length     | u32     | The total file length.                                                                                                       |
-| version    | u16     | Some kind of version relating to tag parsing. Modern afp libs only accept 0x200.                                             |
-| nameoffset | u16     | Relative to string table. Usually the first string in the table, this is the name of the file/movie.                         |
-| flags      | u32     | Not all bits known. 0x1 and 0x3 determine the presence of some fields in AP2Attributes. 0x8 seems to disable AP2Action tags. |
-| left       | u16     | Composition bounding box.                                                                                                    |
-| right      | u16     |                                                                                                                              |
-| top        | u16     |                                                                                                                              |
-| bottom     | u16     |                                                                                                                              |
+| Field      | Type    | Comment                                                                                                                                                                                                                                  |
+|------------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| magic      | char[4] | First byte is the version id. The whole thing can be decoded to AP2 by reading in little endian and & 0x7f7f7f00.                                                                                                                        |
+| length     | u32     | The total file length.                                                                                                                                                                                                                   |
+| version    | u16     | Some kind of version relating to tag parsing. Modern afp libs only accept 0x200.                                                                                                                                                         |
+| nameoffset | u16     | Relative to string table. Usually the first string in the table, this is the name of the file/movie.                                                                                                                                     |
+| flags      | u32     | Not all bits known. 0x1 and 0x4 determine the presence of some fields in AP2Attributes. 0x2 determines how the fps attribute is parsed. 0x8 seems to disable AP2Action tags. 0x40 and 0x80 are usually on, but their purpose is unknown. |
+| left       | u16     | Composition bounding box.                                                                                                                                                                                                                |
+| right      | u16     |                                                                                                                                                                                                                                          |
+| top        | u16     |                                                                                                                                                                                                                                          |
+| bottom     | u16     |                                                                                                                                                                                                                                          |
 
 ### struct AP2Attributes
 Follows the AP2Header. Contains some more information about the composition as well as absolute offsets for the main sections 
