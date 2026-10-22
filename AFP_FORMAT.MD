@@ -384,12 +384,12 @@ of the main movie clip in a similar order. It has its own timeline that can be c
 
 
 ### struct AP2RemoveObjectTag
-Removes object id from the canvas at the specified depth.
+Removes an object from the canvas at the specified depth. The id isn't used.
 
-| Field        | Type | Comment |
-|--------------|------|---------|
-| object_id    | u16  |         |
-| depth        | u16  |         |
+| Field        | Type | Comment      |
+|--------------|------|--------------|
+| object_id    | u16  | 0 / not used |
+| depth        | u16  |              |
 
 ### struct EventData
 Event triggers found within an AP2_PLACE_OBJECT tag. Some event triggers include ON_LOAD, ON_ENTER_FRAME, ON_UNLOAD, mouse
